@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fin_aiwh console</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --line: #232b36; --ink: #e6edf3;
+    --dim: #8b949e; --faint: #6e7681;
+    --breaking: #f85149; --medium: #d29922; --low: #58a6ff; --ok: #3fb950;
+    --accent: #58a6ff;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #ffffff; --panel: #f6f8fa; --line: #d8dee4; --ink: #1f2328;
+      --dim: #59636e; --faint: #818b98;
+      --breaking: #cf222e; --medium: #9a6700; --low: #0969da; --ok: #1a7f37;
+      --accent: #0969da;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --panel: #151b23; --line: #232b36; --ink: #e6edf3;
+    --dim: #8b949e; --faint: #6e7681;
+    --breaking: #f85149; --medium: #d29922; --low: #58a6ff; --ok: #3fb950;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.5 var(--mono);
+  }
+  header {
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  .sub { color: var(--dim); font-size: 12px; }
+  .counts { margin-left: auto; display: flex; gap: 14px; font-size: 12px; }
+  .counts b { font-weight: 600; }
+  main {
+    display: grid; grid-template-columns: 290px minmax(0, 1fr);
+    gap: 16px; padding: 16px; align-items: start;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; margin-bottom: 16px;
+  }
+  h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 0; padding: 10px 12px;
+    border-bottom: 1px solid var(--line); font-weight: 600;
+  }
+  .body { padding: 10px 12px; }
+  button {
+    font: inherit; font-size: 12px; width: 100%; text-align: left;
+    background: transparent; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 5px; padding: 7px 9px; margin-bottom: 6px; cursor: pointer;
+    display: block;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button .k { color: var(--faint); font-size: 11px; display: block; margin-top: 2px; }
+  button:hover:not(:disabled) .k { color: var(--dim); }
+  button.danger:hover:not(:disabled) { border-color: var(--breaking); color: var(--breaking); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    text-align: left; color: var(--dim); font-weight: 600; padding: 6px 8px;
+    border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 11px;
+    text-transform: uppercase; letter-spacing: .05em;
+  }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td.why { color: var(--dim); }
+  .sev { font-weight: 600; white-space: nowrap; }
+  .BREAKING { color: var(--breaking); } .MEDIUM { color: var(--medium); } .LOW { color: var(--low); }
+  .pill {
+    font-size: 10px; padding: 1px 6px; border-radius: 10px;
+    border: 1px solid var(--line); color: var(--dim); white-space: nowrap;
+  }
+  .pill.OPEN { color: var(--medium); border-color: currentColor; }
+  .pill.PROPOSED, .pill.MERGED { color: var(--ok); border-color: currentColor; }
+  .pill.ESCALATED { color: var(--breaking); border-color: currentColor; }
+  a { color: var(--accent); }
+  pre#log {
+    margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.45;
+    white-space: pre-wrap; word-break: break-word; max-height: 360px;
+    overflow: auto; color: var(--ink);
+  }
+  #log .c { color: var(--faint); }
+  .empty { color: var(--faint); padding: 10px 12px; font-size: 12px; }
+  .running { color: var(--medium); }
+  .spin { display: inline-block; animation: s 1s steps(4) infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>fin_aiwh</h1>
+  <span class="sub">contract control plane</span>
+  <div class="counts" id="counts"></div>
+</header>
+
+<main>
+  <div>
+    <section>
+      <h2>Scenarios</h2>
+      <div class="body" id="scenarios"></div>
+    </section>
+    <section>
+      <h2>Control plane</h2>
+      <div class="body">
+        <button data-run="detect">detect<span class="k">compare warehouse to contracts</span></button>
+        <button data-run="register">register<span class="k">publish contracts</span></button>
+        <button data-run="agent-dry">agent --dry-run<span class="k">draft and verify, change nothing</span></button>
+        <button data-run="agent">agent<span class="k">open PRs and issues</span></button>
+        <button data-run="dbt-build">dbt build<span class="k">models and tests</span></button>
+      </div>
+    </section>
+    <section>
+      <h2>Reset</h2>
+      <div class="body">
+        <button class="danger" data-scenario="99_reset">apply 99_reset<span class="k">rebuild RAW to v1</span></button>
+        <button data-run="load">load<span class="k">reload seed data</span></button>
+        <button data-run="resolve-all">resolve --all<span class="k">close every open event</span></button>
+      </div>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2 id="logtitle">Console</h2>
+      <pre id="log"><span class="c">Pick a scenario or an action. Output appears here exactly as the CLI prints it.</span></pre>
+    </section>
+    <section>
+      <h2>Drift events</h2>
+      <div id="events"><div class="empty">loading…</div></div>
+    </section>
+    <section>
+      <h2>Active contracts</h2>
+      <div id="contracts"><div class="empty">loading…</div></div>
+    </section>
+    <section>
+      <h2>Recent runs</h2>
+      <div id="runs"><div class="empty">loading…</div></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+let busy = false, poll = null;
+
+function setBusy(on) {
+  busy = on;
+  document.querySelectorAll("button").forEach(b => b.disabled = on);
+}
+
+async function meta() {
+  const m = await (await fetch("/api/meta")).json();
+  $("#scenarios").innerHTML = m.scenarios
+    .filter(s => s.key !== "99_reset")
+    .map(s => `<button data-scenario="${s.key}">${esc(s.key.replace(/_/g, " "))}`
+            + `<span class="k">${esc(s.title)}</span></button>`).join("");
+}
+
+function render(d) {
+  if (d.error) {
+    $("#events").innerHTML = `<div class="empty">could not read the control plane: ${esc(d.error)}</div>`;
+    return;
+  }
+  const open = d.events.filter(e => e.STATUS === "OPEN");
+  const n = s => open.filter(e => e.SEVERITY === s).length;
+  $("#counts").innerHTML =
+      `<span class="BREAKING"><b>${n("BREAKING")}</b> breaking</span>`
+    + `<span class="MEDIUM"><b>${n("MEDIUM")}</b> medium</span>`
+    + `<span class="LOW"><b>${n("LOW")}</b> low</span>`
+    + `<span class="sub">${d.contracts.length} contracts</span>`;
+
+  $("#events").innerHTML = d.events.length ? `<table>
+    <tr><th>sev</th><th>dataset</th><th>change</th><th>object</th><th>status</th><th>why</th></tr>
+    ${d.events.map(e => `<tr>
+      <td class="sev ${e.SEVERITY}">${e.SEVERITY}</td>
+      <td>${esc(e.DATASET_KEY)}</td>
+      <td>${esc(e.CHANGE_TYPE)}</td>
+      <td>${esc(e.OBJECT_NAME || "—")}</td>
+      <td><span class="pill ${e.STATUS}">${e.STATUS}</span>${
+        e.RESOLUTION_REF ? ` <a href="${esc(e.RESOLUTION_REF)}" target="_blank">↗</a>` : ""}</td>
+      <td class="why">${esc(e.RATIONALE)}</td></tr>`).join("")}
+  </table>` : `<div class="empty">no drift events. the warehouse matches every registered contract.</div>`;
+
+  $("#contracts").innerHTML = `<table>
+    <tr><th>dataset</th><th>version</th><th>owner</th><th>registered</th></tr>
+    ${d.contracts.map(c => `<tr><td>${esc(c.CONTRACT_KEY)}</td><td>v${c.VERSION}</td>
+      <td>${esc(c.OWNER)}</td><td class="why">${esc(c.REGISTERED)}</td></tr>`).join("")}
+  </table>`;
+
+  $("#runs").innerHTML = d.runs.length ? `<table>
+    <tr><th>started</th><th>type</th><th>scanned</th><th>raised</th><th>status</th></tr>
+    ${d.runs.map(r => `<tr><td class="why">${esc(r.STARTED)}</td><td>${esc(r.RUN_TYPE)}</td>
+      <td>${r.DATASETS_SCANNED ?? "—"}</td><td>${r.EVENTS_RAISED ?? "—"}</td>
+      <td>${esc(r.STATUS)}</td></tr>`).join("")}
+  </table>` : `<div class="empty">no runs yet</div>`;
+}
+
+async function refresh() {
+  try { render(await (await fetch("/api/state")).json()); }
+  catch (e) { $("#events").innerHTML = `<div class="empty">${esc(e)}</div>`; }
+}
+
+function watch(id, label) {
+  $("#logtitle").innerHTML = `Console — <span class="running">${esc(label)} <span class="spin">⠿</span></span>`;
+  clearInterval(poll);
+  poll = setInterval(async () => {
+    const j = await (await fetch("/api/job/" + id)).json();
+    $("#log").textContent = j.lines.join("\n") || "…";
+    $("#log").scrollTop = $("#log").scrollHeight;
+    if (j.done) {
+      clearInterval(poll);
+      setBusy(false);
+      const ok = j.rc === 0;
+      $("#logtitle").innerHTML = `Console — <span class="${ok ? "LOW" : "BREAKING"}">`
+        + `${esc(label)} exited ${j.rc}</span>`;
+      refresh();
+    }
+  }, 500);
+}
+
+async function go(url, label) {
+  if (busy) return;
+  setBusy(true);
+  $("#log").textContent = "";
+  const r = await (await fetch(url, {method: "POST"})).json();
+  if (r.error) { $("#log").textContent = r.error; setBusy(false); return; }
+  watch(r.job, label);
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.run) go("/api/run/" + b.dataset.run, b.dataset.run);
+  if (b.dataset.scenario) go("/api/scenario/" + b.dataset.scenario, "apply " + b.dataset.scenario);
+});
+
+meta(); refresh(); setInterval(() => { if (!busy) refresh(); }, 15000);
+</script>
+</body>
+</html>
