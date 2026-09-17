@@ -1,0 +1,63 @@
+version: 2
+
+# Mart contracts are enforced. dbt refuses to build a model whose output shape
+# does not match what is declared here, which is how a RAW change that survives
+# staging still gets stopped before it reaches a report.
+models:
+  - name: fct_ap_open_items
+    description: One row per non cancelled AP invoice with paid and outstanding balances in USD.
+    config:
+      contract: {enforced: true}
+    columns:
+      - {name: invoice_id,             data_type: "varchar(32)",   constraints: [{type: not_null}], data_tests: [unique]}
+      - {name: vendor_id,              data_type: "varchar(32)",   constraints: [{type: not_null}]}
+      - {name: entity_code,            data_type: "varchar(8)",    constraints: [{type: not_null}]}
+      - {name: invoice_number,         data_type: "varchar(64)"}
+      - {name: invoice_date,           data_type: date,          constraints: [{type: not_null}]}
+      - {name: due_date,               data_type: date,          constraints: [{type: not_null}]}
+      - {name: currency_code,          data_type: "varchar(3)",    constraints: [{type: not_null}]}
+      - {name: status,                 data_type: "varchar(16)",   constraints: [{type: not_null}]}
+      - {name: gross_amount,           data_type: "number(18,2)",  constraints: [{type: not_null}]}
+      - {name: paid_amount,            data_type: "number(18,2)",  constraints: [{type: not_null}]}
+      - {name: outstanding_amount,     data_type: "number(18,2)",  constraints: [{type: not_null}]}
+      - {name: last_payment_date,      data_type: date}
+      - {name: rate_to_usd,            data_type: "number(18,8)"}
+      - {name: gross_amount_usd,       data_type: "number(18,2)"}
+      - {name: outstanding_amount_usd, data_type: "number(18,2)"}
+      - {name: days_past_due,          data_type: "number(9,0)",   constraints: [{type: not_null}]}
+      - {name: aging_bucket,           data_type: "varchar(7)",    constraints: [{type: not_null}],
+         data_tests: [{accepted_values: {arguments: {values: [CURRENT, "1-30", "31-60", "61-90", "90+"]}}}]}
+      - {name: loaded_at,              data_type: timestamp_ntz, constraints: [{type: not_null}]}
+
+  - name: fct_ar_open_items
+    description: One row per non cancelled AR invoice with received and outstanding balances in USD.
+    config:
+      contract: {enforced: true}
+    columns:
+      - {name: invoice_id,             data_type: "varchar(32)",   constraints: [{type: not_null}], data_tests: [unique]}
+      - {name: customer_id,            data_type: "varchar(32)",   constraints: [{type: not_null}]}
+      - {name: entity_code,            data_type: "varchar(8)",    constraints: [{type: not_null}]}
+      - {name: invoice_number,         data_type: "varchar(64)"}
+      - {name: invoice_date,           data_type: date,          constraints: [{type: not_null}]}
+      - {name: due_date,               data_type: date,          constraints: [{type: not_null}]}
+      - {name: currency_code,          data_type: "varchar(3)",    constraints: [{type: not_null}]}
+      - {name: status,                 data_type: "varchar(16)",   constraints: [{type: not_null}]}
+      - {name: gross_amount,           data_type: "number(18,2)",  constraints: [{type: not_null}]}
+      - {name: received_amount,        data_type: "number(18,2)",  constraints: [{type: not_null}]}
+      - {name: outstanding_amount,     data_type: "number(18,2)",  constraints: [{type: not_null}]}
+      - {name: last_receipt_date,      data_type: date}
+      - {name: rate_to_usd,            data_type: "number(18,8)"}
+      - {name: gross_amount_usd,       data_type: "number(18,2)"}
+      - {name: outstanding_amount_usd, data_type: "number(18,2)"}
+      - {name: days_past_due,          data_type: "number(9,0)",   constraints: [{type: not_null}]}
+      - {name: aging_bucket,           data_type: "varchar(7)",    constraints: [{type: not_null}]}
+      - {name: loaded_at,              data_type: timestamp_ntz, constraints: [{type: not_null}]}
+
+  - name: agg_ap_aging
+    description: AP outstanding by entity and aging bucket, USD.
+  - name: agg_ar_aging
+    description: AR outstanding by entity and aging bucket, USD.
+  - name: kpi_dso_dpo
+    description: DSO and DPO per entity as of today, count back method over trailing 90 days.
+    columns:
+      - {name: entity_code, data_tests: [unique, not_null]}

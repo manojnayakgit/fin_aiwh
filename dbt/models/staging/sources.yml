@@ -1,0 +1,23 @@
+version: 2
+
+sources:
+  - name: raw
+    database: FIN_AIWH
+    schema: RAW
+    description: Landed source data. Shape is governed by contracts/raw/, not by this file.
+    config:
+      loaded_at_field: LOADED_AT
+      freshness:
+        warn_after: {count: 24, period: hour}
+        error_after: {count: 48, period: hour}
+    tables:
+      - name: AP_VENDOR
+      - name: AP_INVOICE
+      - name: AP_INVOICE_LINE
+      - name: AP_PAYMENT
+      - name: AR_CUSTOMER
+      - name: AR_INVOICE
+      - name: AR_RECEIPT
+      - name: FX_RATE
+        config:
+          freshness: null

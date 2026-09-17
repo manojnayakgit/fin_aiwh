@@ -1,0 +1,26 @@
+# Reads the same .env the control plane uses. Run dbt through:
+#   python -m control.cli dbt <args>
+# which loads .env and resolves the key path before handing off.
+fin_aiwh:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'FIN_AIWH_ENG') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'FIN_AIWH_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'FIN_AIWH') }}"
+      schema: STAGING
+      threads: 4
+    ci:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      role: "{{ env_var('SNOWFLAKE_ROLE', 'FIN_AIWH_ENG') }}"
+      warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE', 'FIN_AIWH_WH') }}"
+      database: "{{ env_var('SNOWFLAKE_DATABASE', 'FIN_AIWH') }}"
+      schema: CI
+      threads: 4

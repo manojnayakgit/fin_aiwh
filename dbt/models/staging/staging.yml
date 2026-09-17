@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: stg_ap_invoice
+    columns:
+      - name: invoice_id
+        data_tests: [unique, not_null]
+      - name: vendor_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ap_vendor')
+                field: vendor_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [OPEN, PAID, PARTIAL, CANCELLED, DISPUTED]
+  - name: stg_ap_invoice_line
+    columns:
+      - name: line_id
+        data_tests: [unique, not_null]
+      - name: invoice_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ap_invoice')
+                field: invoice_id
+  - name: stg_ap_payment
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+  - name: stg_ar_invoice
+    columns:
+      - name: invoice_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ar_customer')
+                field: customer_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [OPEN, PAID, PARTIAL, CANCELLED, DISPUTED]
+  - name: stg_ar_receipt
+    columns:
+      - name: receipt_id
+        data_tests: [unique, not_null]
+  - name: stg_fx_rate
