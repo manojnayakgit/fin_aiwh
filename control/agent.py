@@ -218,7 +218,14 @@ def build_prompt(bundle: Bundle, example_contract: str) -> str:
 def draft(bundle: Bundle, client=None, model: str | None = None) -> Proposal:
     """Ask the model for a proposal. Returns an unverified Proposal."""
     if client is None:
-        import anthropic
+        try:
+            import anthropic
+        except ImportError:
+            raise SystemExit(
+                "the anthropic package is not installed. Run: pip install -r requirements.txt"
+            )
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise SystemExit("ANTHROPIC_API_KEY is not set. Add it to .env")
         client = anthropic.Anthropic()
     model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
 
