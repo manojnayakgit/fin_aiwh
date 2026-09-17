@@ -1,4 +1,5 @@
 -- Scenario: a new source table lands in the warehouse with no contract.
+-- Re-runnable: firing it twice is a no-op, because the console is a button.
 -- Expected: DATASET_UNGOVERNED / MEDIUM. It cannot be modelled until someone
 -- either writes a contract for it or rejects it.
 CREATE OR REPLACE TABLE FIN_AIWH.RAW.AP_ACCRUAL (
