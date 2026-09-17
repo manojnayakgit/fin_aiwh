@@ -15,6 +15,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
 from .contracts import Contract, ContractColumn
+from .lineage import Impact, Lineage
 from .snow import query, execute
 
 LOW, MEDIUM, BREAKING = "LOW", "MEDIUM", "BREAKING"
@@ -47,6 +48,7 @@ class Finding:
     before: dict | None
     after: dict | None
     rationale: str
+    impact: Impact | None = None
 
     def fingerprint(self) -> str:
         blob = json.dumps(
@@ -276,6 +278,18 @@ def diff_all(
     return sorted(findings, key=lambda f: (order[f.severity], f.dataset_key, f.object_name or ""))
 
 
+def attach_impact(findings: list[Finding], lineage: Lineage | None = None) -> list[Finding]:
+    """Work out what each finding breaks. Cheap: the graph is already in memory."""
+    lg = lineage or Lineage.load()
+    for f in findings:
+        # A dataset level change affects everything downstream of the dataset.
+        # A column level change affects only the paths that carry that column.
+        col = f.object_name if f.change_type not in (
+            "DATASET_MISSING", "DATASET_UNGOVERNED") else None
+        f.impact = lg.impact(f.dataset_key, col)
+    return findings
+
+
 # --------------------------------------------------------------------------
 # persistence
 # --------------------------------------------------------------------------
@@ -316,11 +330,12 @@ def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract
             """
             INSERT INTO META.DRIFT_EVENT
               (EVENT_ID, RUN_ID, DATASET_KEY, CONTRACT_VERSION, CHANGE_TYPE,
-               SEVERITY, OBJECT_NAME, BEFORE_STATE, AFTER_STATE, RATIONALE, STATUS)
+               SEVERITY, OBJECT_NAME, BEFORE_STATE, AFTER_STATE, RATIONALE, STATUS,
+               IMPACT)
             SELECT %(event_id)s, %(run_id)s, %(dataset)s, %(version)s, %(change_type)s,
                    %(severity)s, %(object_name)s,
                    TRY_PARSE_JSON(%(before)s), TRY_PARSE_JSON(%(after)s),
-                   %(rationale)s, 'OPEN'
+                   %(rationale)s, 'OPEN', TRY_PARSE_JSON(%(impact)s)
             """,
             {
                 "event_id": fp,
@@ -333,6 +348,7 @@ def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract
                 "before": json.dumps(f.before) if f.before is not None else None,
                 "after": json.dumps(f.after) if f.after is not None else None,
                 "rationale": f.rationale,
+                "impact": json.dumps(f.impact.as_dict()) if f.impact else None,
             },
         )
         written += 1

@@ -73,7 +73,7 @@
   button.danger:hover:not(:disabled) { border-color: var(--breaking); color: var(--breaking); }
   table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
   col.sevc { width: 78px; } col.dsc { width: 150px; } col.chc { width: 160px; }
-  col.obc { width: 120px; } col.stc { width: 96px; }
+  col.obc { width: 120px; } col.stc { width: 96px; } col.bkc { width: 150px; }
   th {
     text-align: left; color: var(--dim); font-weight: 600; padding: 6px 8px;
     border-bottom: 1px solid var(--line); white-space: nowrap; font-size: 11px;
@@ -127,6 +127,7 @@
         <button data-run="agent">agent<span class="k">open PRs and issues</span></button>
         <button data-run="sync">sync<span class="k">pull PR and issue outcomes back in</span></button>
         <button data-run="dbt-build">dbt build<span class="k">models and tests</span></button>
+        <button data-run="dbt-parse">dbt parse<span class="k">refresh lineage for impact analysis</span></button>
       </div>
     </section>
     <section>
@@ -180,6 +181,17 @@ async function meta() {
 let showAll = false;
 let last = null;
 
+function breaks(e) {
+  let imp = e.IMPACT;
+  if (typeof imp === "string") { try { imp = JSON.parse(imp); } catch { imp = null; } }
+  if (!imp) return `<span class="sub">-</span>`;
+  if (imp.manifest_seen === false) return `<span class="sub">no manifest</span>`;
+  const marts = imp.marts || [];
+  if (marts.length) return `<span class="BREAKING">${esc(marts.join(", "))}</span>`;
+  const n = (imp.models || []).length;
+  return n ? `<span class="sub">${n} staging</span>` : `<span class="sub">nothing</span>`;
+}
+
 function render(d) {
   last = d;
   if (d.error) {
@@ -203,8 +215,9 @@ function render(d) {
   const rows = showAll ? d.events : open;
   $("#events").innerHTML = rows.length ? `<table>
     <colgroup><col class="sevc"><col class="dsc"><col class="chc"><col class="obc">
-      <col class="stc"><col></colgroup>
-    <tr><th>sev</th><th>dataset</th><th>change</th><th>object</th><th>status</th><th>why</th></tr>
+      <col class="stc"><col class="bkc"><col></colgroup>
+    <tr><th>sev</th><th>dataset</th><th>change</th><th>object</th><th>status</th>
+        <th>breaks</th><th>why</th></tr>
     ${rows.map(e => `<tr>
       <td class="sev ${e.SEVERITY}">${e.SEVERITY}</td>
       <td>${esc(e.DATASET_KEY)}</td>
@@ -212,6 +225,7 @@ function render(d) {
       <td>${esc(e.OBJECT_NAME || "—")}</td>
       <td><span class="pill ${e.STATUS}">${e.STATUS}</span>${
         e.RESOLUTION_REF ? ` <a href="${esc(e.RESOLUTION_REF)}" target="_blank">↗</a>` : ""}</td>
+      <td>${breaks(e)}</td>
       <td class="why">${esc(e.RATIONALE)}</td></tr>`).join("")}
   </table>` : `<div class="empty">${showAll
       ? "no drift events at all."

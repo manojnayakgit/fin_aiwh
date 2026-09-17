@@ -21,6 +21,7 @@ import yaml
 from .config import ROOT
 from .contracts import CONTRACT_DIR, Contract, load_contracts, parse_contract
 from .detect import BREAKING, LOW, MEDIUM, ObservedColumn, diff_dataset
+from .lineage import Lineage
 from .snow import execute, query
 
 SEV_ORDER = {LOW: 0, MEDIUM: 1, BREAKING: 2}
@@ -38,6 +39,19 @@ class Bundle:
     events: list[dict]
     contract: Contract | None
     observed: dict[str, ObservedColumn]
+    lineage: Lineage | None = None
+
+    def impact_for(self, event: dict):
+        """What this one event breaks downstream."""
+        if self.lineage is None:
+            return None
+        col = event.get("OBJECT_NAME") if event.get("CHANGE_TYPE") not in (
+            "DATASET_MISSING", "DATASET_UNGOVERNED") else None
+        return self.lineage.impact(self.dataset_key, col)
+
+    def dataset_impact(self):
+        """Everything downstream of the dataset, regardless of column."""
+        return self.lineage.impact(self.dataset_key) if self.lineage else None
 
     @property
     def worst(self) -> str:
@@ -103,6 +117,7 @@ def bundle_events(
     events: list[dict],
     contracts: list[Contract],
     observed: dict[str, dict[str, ObservedColumn]],
+    lineage: Lineage | None = None,
 ) -> list[Bundle]:
     by_key = {c.dataset: c for c in contracts}
     groups: dict[str, list[dict]] = {}
@@ -114,6 +129,7 @@ def bundle_events(
             events=v,
             contract=by_key.get(k),
             observed=observed.get(k, {}),
+            lineage=lineage,
         )
         for k, v in sorted(groups.items())
     ]
@@ -202,6 +218,13 @@ def build_prompt(bundle: Bundle, example_contract: str) -> str:
         staging = p.read_text()
 
     parts = [f"Dataset: {bundle.dataset_key}", "", "Drift events:", _events_json(bundle.events), ""]
+
+    impacts = [(e, bundle.impact_for(e)) for e in bundle.events]
+    lines = [f"- {e['OBJECT_NAME'] or bundle.dataset_key}: {i.summary()}"
+             + (f" ({', '.join(i.marts)})" if i and i.marts else "")
+             for e, i in impacts if i and not i.empty]
+    if lines:
+        parts += ["Downstream impact of these changes, from dbt lineage:", *lines, ""]
     parts += ["Live schema from INFORMATION_SCHEMA:", _observed_json(bundle.observed), ""]
     if current:
         parts += ["Current contract:", "```yaml", current, "```", ""]
@@ -378,8 +401,13 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
             proposal.staging_path.write_text(proposal.staging_sql)
             files.append(str(proposal.staging_path.relative_to(ROOT)))
         _run(["git", "add", *files])
+        impact = proposal.bundle.dataset_impact()
+        impact_block = (
+            f"\n## Downstream impact\n\n{impact.markdown()}\n"
+            if impact and not impact.empty else ""
+        )
         body = (
-            f"{proposal.pr_body}\n\n---\n"
+            f"{proposal.pr_body}\n{impact_block}\n---\n"
             f"Agent reasoning: {proposal.reasoning}\n\n"
             f"Drift events: {', '.join(proposal.bundle.event_ids)}\n"
         )
@@ -408,14 +436,28 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
 def escalate(bundle: Bundle) -> str:
     """BREAKING gets an issue, never a PR. Returns the issue url."""
     _ensure_labels()
+    marts = sorted({m for e in bundle.events
+                    for m in (getattr(bundle.impact_for(e), "marts", None) or [])})
+    headline = (
+        f"Breaking drift on `{bundle.dataset_key}`."
+        + (f" **This affects {', '.join('`' + m + '`' for m in marts)}.**" if marts else "")
+        + " The release gate will fail until this is resolved."
+    )
     lines = [
-        f"Breaking drift on `{bundle.dataset_key}`. The release gate will fail until this is resolved.",
-        "",
-        "| severity | change | object | why |",
-        "|---|---|---|---|",
+        headline, "",
+        "| severity | change | object | breaks | why |",
+        "|---|---|---|---|---|",
     ]
     for e in bundle.events:
-        lines.append(f"| {e['SEVERITY']} | {e['CHANGE_TYPE']} | {e['OBJECT_NAME'] or '-'} | {e['RATIONALE']} |")
+        imp = bundle.impact_for(e)
+        lines.append(
+            f"| {e['SEVERITY']} | {e['CHANGE_TYPE']} | {e['OBJECT_NAME'] or '-'} "
+            f"| {imp.summary() if imp else '-'} | {e['RATIONALE']} |"
+        )
+    detail = bundle.dataset_impact()
+    if detail and not detail.empty:
+        lines += ["", "<details><summary>Full downstream impact</summary>", "",
+                  detail.markdown(), "", "</details>"]
     lines += [
         "",
         "Options: revert the upstream change, or agree a new contract version through a reviewed PR.",
