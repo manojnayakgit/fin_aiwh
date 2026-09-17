@@ -147,6 +147,26 @@ def cmd_dbt(args):
     return subprocess.call(cmd, env=env, cwd=dbt_dir)
 
 
+def cmd_resolve(args):
+    """Close open drift events once the warehouse or the contract has been fixed."""
+    if not args.all and not args.event:
+        console.print("[red]pass --all or one or more event ids[/red]")
+        return 1
+    where = "STATUS = 'OPEN'" if args.all else "EVENT_ID IN (%s)" % ",".join(
+        f"'{e}'" for e in args.event
+    )
+    with connect() as conn:
+        n = query(conn, f"SELECT COUNT(*) AS C FROM META.DRIFT_EVENT WHERE {where}")[0]["C"]
+        execute(
+            conn,
+            f"UPDATE META.DRIFT_EVENT SET STATUS = %(st)s, RESOLVED_AT = SYSDATE(), "
+            f"RESOLUTION_REF = %(ref)s WHERE {where}",
+            {"st": args.status, "ref": args.ref},
+        )
+    console.print(f"[green]{n} event(s) marked {args.status}[/green]")
+    return 0
+
+
 def cmd_status(_args):
     with connect() as conn:
         rows = query(conn, "SELECT * FROM META.OPEN_DRIFT")
@@ -191,6 +211,13 @@ def main(argv=None):
     d.set_defaults(fn=cmd_detect)
 
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)
+
+    r = sub.add_parser("resolve", help="close open drift events")
+    r.add_argument("event", nargs="*", help="event ids to close")
+    r.add_argument("--all", action="store_true", help="close every OPEN event")
+    r.add_argument("--status", default="DISMISSED", choices=["DISMISSED", "MERGED"])
+    r.add_argument("--ref", default=None, help="PR url or ticket that resolved it")
+    r.set_defaults(fn=cmd_resolve)
 
     b = sub.add_parser("dbt", help="run dbt with the control plane's connection settings")
     b.add_argument("dbt_args", nargs=argparse.REMAINDER, help="arguments passed to dbt")
