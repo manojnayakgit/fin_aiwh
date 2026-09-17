@@ -35,6 +35,7 @@ ALLOWED = {
     "register":     ["register"],
     "load":         ["load"],
     "dbt-build":    ["dbt", "build"],
+    "dbt-parse":    ["dbt", "parse"],
     "agent-dry":    ["agent", "--dry-run"],
     "agent":        ["agent"],
     "sync":         ["sync"],
@@ -102,7 +103,7 @@ def read_state() -> dict:
             conn,
             """
             SELECT EVENT_ID, DATASET_KEY, CHANGE_TYPE, SEVERITY, OBJECT_NAME,
-                   RATIONALE, STATUS, RESOLUTION_REF,
+                   RATIONALE, STATUS, RESOLUTION_REF, IMPACT,
                    TO_VARCHAR(DETECTED_AT, 'YYYY-MM-DD HH24:MI') AS DETECTED
             FROM FIN_AIWH.META.DRIFT_EVENT
             ORDER BY CASE STATUS WHEN 'OPEN' THEN 0 ELSE 1 END,

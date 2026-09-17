@@ -361,6 +361,63 @@ know the *input* lost meaning. Only the source contract sees that. This is
 exactly why the control plane exists, and it is worth saying out loud so nobody
 assumes dbt is a second safety net for that class of change.
 
+
+### 3.7 Impact analysis: what a change actually breaks
+
+A severity says how bad a change is in principle. Impact says what it costs
+here. `control/lineage.py` turns "BANK_REF was dropped" into "BANK_REF was
+dropped, and that breaks `fct_ap_open_items`, `agg_ap_aging` and `kpi_dso_dpo`".
+
+**Where the graph comes from.** dbt writes `dbt/target/manifest.json` when it
+parses or builds. It contains every node, `depends_on` for each, and a
+`child_map` giving the reverse edges. dbt derives this from the real compiled
+SQL, so the **model level** graph is exact, not a guess.
+
+**How a dataset is located.** `RAW.AP_PAYMENT` maps to the manifest source id
+`source.fin_aiwh.raw.AP_PAYMENT`. From there `child_map` is walked transitively
+to collect every downstream node.
+
+**Column level is derived, and says so.** dbt does not publish column lineage.
+For a column scoped event the walk is narrowed:
+
+```
+for each model directly reading the source:
+    does its SQL mention the column?       → affected, confidence "references the column"
+    does it "select *" from the source?    → affected, confidence "selects * ..."
+    neither                                → not affected, and nothing beyond it via that path
+plus: any dbt test on the source scoped to that column
+```
+
+So a change to `PAYMENT_METHOD`, which no staging model selects, correctly
+reports no downstream impact, while a change to `BANK_REF` follows through to
+the marts. Every column result carries its confidence, and it is printed in the
+PR and issue so a reviewer knows whether the attribution was exact or inferred
+from a wildcard.
+
+**Where it shows up.**
+
+| Surface | What it shows |
+|---|---|
+| `detect` | a `breaks` column, plus a red line naming every mart hit by breaking drift |
+| `status` | affected marts beside each open event |
+| `META.DRIFT_EVENT.IMPACT` | the full structure as JSON, queryable |
+| `META.OPEN_DRIFT` | `AFFECTED_MARTS` and `AFFECTED_MODELS` |
+| GitHub issue | affected marts in the headline sentence, full breakdown in a details block |
+| Pull request | a "Downstream impact" section |
+| Agent prompt | the model sees what it is about to affect before drafting |
+| Console | a `breaks` column, marts in red |
+
+**Limits, stated plainly.**
+
+→ It needs a manifest. Without one, impact reads `unknown (no dbt manifest)`
+  rather than falsely claiming nothing is affected. Refresh it with
+  `python -m control.cli dbt parse`.
+→ Column attribution is textual. A column name that also appears in a comment
+  or a string literal would produce a false positive. It errs toward
+  over-reporting, which is the right direction for a risk signal.
+→ It covers the dbt graph. A BI tool or a hand written extract reading MARTS
+  directly is outside it. Adding dbt exposures would bring those in.
+
 ---
 
 ## 4. Tools, and where each is used
@@ -390,13 +447,14 @@ control/             the control plane
   snow.py              Snowflake connection (key pair auth)
   contracts.py         parse, canonicalise, hash contracts
   detect.py            observe live schema, diff, classify, persist   ← the core
+  lineage.py           read dbt's manifest, work out what a change breaks
   register.py          publish contracts to META, append only
   load.py              stage and COPY seed CSVs into RAW
   agent.py             draft via Claude, verify, open PR or issue, sync with GitHub
   cli.py               every command
   ui.py + static/      the local console
 dbt/                 13 models, 22 tests, mart contracts enforced
-ops/sql/             00 bootstrap, 01 META DDL, 02 RAW DDL
+ops/sql/             00 bootstrap, 01 META DDL, 02 RAW DDL, 03 event impact migration
 ops/scenarios/       7 drift scenarios plus a reset, all re-runnable
 seeds/               deterministic AP/AR data generator (~54k rows)
 tests/               52 tests, no warehouse or API required
@@ -537,11 +595,15 @@ python -m control.cli apply ops/sql/02_raw_tables.sql
 python seeds/generate.py                                # ~54k rows of AP/AR data
 python -m control.cli load                              # stage and COPY into RAW
 python -m control.cli register                          # publish the 8 contracts
+python -m control.cli dbt build                         # expect: PASS=35, also writes the manifest
 python -m control.cli detect                            # expect: matches every contract
-python -m control.cli dbt build                         # expect: PASS=35
 ```
 
 A clean `detect` is the baseline. Everything after this is drift.
+
+`dbt build` comes before `detect` on purpose: it writes `dbt/target/manifest.json`,
+which is where impact analysis gets the lineage graph (section 3.7). Without it
+detection still works, it just cannot say what a change breaks.
 
 ### 7.4 GitHub
 
@@ -676,7 +738,8 @@ Builds land in `FIN_AIWH.CI`, never in STAGING or MARTS.
 → Agent: drafts, is verified, opens PRs and issues, routes by severity correctly
 → Full cycle demonstrated: drift detected → agent PR → merged → registered →
   dataset clean at contract v2 → events reconciled to MERGED
-→ Console, 52 tests, `sync` closing the lifecycle both ways
+→ Console, 62 tests, `sync` closing the lifecycle both ways
+→ Impact analysis from dbt lineage, on every event and in every PR and issue
 
 ### Not done
 
@@ -737,3 +800,5 @@ the draft either way.
 | Contract shows an old version in `status` | A merged contract is not in force until `register` runs |
 | `detect` reports drift already handled | Expected. It shows `already being worked on N` and does not duplicate |
 | dbt contract error on a fact model | A cast changed shape. Mart contracts in `dbt/models/marts/marts.yml` are enforced deliberately |
+| Impact shows `no manifest` | `dbt/target/` is gitignored and absent after a fresh clone. Run `python -m control.cli dbt parse` |
+| `IMPACT` column missing on DRIFT_EVENT | Existing install predating impact analysis. Run `apply ops/sql/03_event_impact.sql` |

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS FIN_AIWH.META.DRIFT_EVENT (
     RATIONALE         VARCHAR,                 -- why this severity, in plain language
     STATUS            VARCHAR      NOT NULL DEFAULT 'OPEN',  -- OPEN, PROPOSED, MERGED, DISMISSED
     RESOLVED_AT       TIMESTAMP_NTZ,
-    RESOLUTION_REF    VARCHAR                  -- PR url once the agent acts on it
+    RESOLUTION_REF    VARCHAR,                 -- PR url once the agent acts on it
+    IMPACT            VARIANT                  -- what breaks downstream, from dbt lineage
 );
 
 -- One row per detector execution, so runs are auditable even when nothing drifted.
@@ -73,7 +74,9 @@ SELECT * EXCLUDE (RN) FROM (
 
 -- Convenience view: what needs a human or an agent right now.
 CREATE OR REPLACE VIEW FIN_AIWH.META.OPEN_DRIFT AS
-SELECT DATASET_KEY, CHANGE_TYPE, SEVERITY, OBJECT_NAME, RATIONALE, DETECTED_AT, EVENT_ID
+SELECT DATASET_KEY, CHANGE_TYPE, SEVERITY, OBJECT_NAME, RATIONALE,
+       IMPACT:marts AS AFFECTED_MARTS, IMPACT:models AS AFFECTED_MODELS,
+       DETECTED_AT, EVENT_ID
 FROM FIN_AIWH.META.DRIFT_EVENT
 WHERE STATUS = 'OPEN'
 ORDER BY CASE SEVERITY WHEN 'BREAKING' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END, DETECTED_AT;

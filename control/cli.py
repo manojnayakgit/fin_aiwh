@@ -13,10 +13,12 @@ from rich.table import Table
 from .config import ROOT, load_settings
 from .contracts import load_contracts
 from .detect import (
-    BREAKING, MEDIUM, diff_all, fetch_observed, new_run_id, persist, snapshot_observed,
+    BREAKING, MEDIUM, attach_impact, diff_all, fetch_observed, new_run_id, persist,
+    snapshot_observed,
 )
 from .agent import (BREAKING as _B, bundle_events, draft, escalate, github_outcome,
                     mark, open_events, pending_events, publish, set_status, verify)
+from .lineage import Lineage
 from .load import load_all
 from .register import register
 from .snow import connect, execute, execute_script, query
@@ -134,6 +136,11 @@ def cmd_detect(args):
             # scoped run: only judge the named datasets, never flag others as ungoverned
             observed = {k: v for k, v in observed.items() if k in wanted}
         findings = diff_all(contracts, observed)
+
+    lineage = Lineage.load()
+    attach_impact(findings, lineage)
+
+    with connect(s) as conn:
         if not args.dry_run:
             snapshot_observed(conn, run_id, observed)
             written, suppressed = persist(conn, run_id, findings, contracts)
@@ -154,14 +161,26 @@ def cmd_detect(args):
         return 0
 
     table = Table(show_lines=False, header_style="bold")
-    for col in ("severity", "dataset", "change", "object", "why"):
+    for col in ("severity", "dataset", "change", "object", "breaks", "why"):
         table.add_column(col, overflow="fold")
     for f in findings:
         table.add_row(
             f"[{SEV_STYLE[f.severity]}]{f.severity}[/]",
-            f.dataset_key, f.change_type, f.object_name or "-", f.rationale,
+            f.dataset_key, f.change_type, f.object_name or "-",
+            f.impact.summary() if f.impact else "-",
+            f.rationale,
         )
     console.print(table)
+
+    if not lineage.available:
+        console.print("[yellow]no dbt manifest, so downstream impact is unknown.[/yellow] "
+                      "[dim]run: python -m control.cli dbt parse[/dim]")
+    else:
+        worst = [f for f in findings if f.severity == BREAKING and f.impact and f.impact.marts]
+        if worst:
+            hit = sorted({m for f in worst for m in f.impact.marts})
+            console.print(f"\n[bold red]marts affected by breaking drift:[/bold red] "
+                          + ", ".join(hit))
 
     if args.fail_on_breaking and any(f.severity == BREAKING for f in findings):
         console.print("[bold red]breaking drift present[/bold red]")
@@ -213,7 +232,7 @@ def cmd_agent(args):
     with connect(s) as conn:
         events = open_events(conn)
         observed = fetch_observed(conn, s.database, s.raw_schema)
-    bundles = bundle_events(events, contracts, observed)
+    bundles = bundle_events(events, contracts, observed, Lineage.load())
     if args.dataset:
         bundles = [b for b in bundles if b.dataset_key == args.dataset.upper()]
     if not bundles:
@@ -223,8 +242,10 @@ def cmd_agent(args):
     console.print(f"{len(events)} open event(s) across {len(bundles)} dataset(s)\n")
     rc = 0
     for b in bundles:
+        di = b.dataset_impact()
+        breaks = f"  [dim]touches {di.summary()}[/dim]" if di and not di.empty else ""
         console.print(f"[bold]{b.dataset_key}[/bold]  worst [{SEV_STYLE[b.worst]}]{b.worst}[/]  "
-                      f"{len(b.events)} event(s)")
+                      f"{len(b.events)} event(s){breaks}")
 
         if b.worst == BREAKING:
             if args.dry_run:
@@ -314,9 +335,16 @@ def cmd_status(_args):
         console.print(f"  v{c['VERSION']}  {c['CONTRACT_KEY']}")
     console.print(f"\n[bold]{len(rows)} open drift events[/bold]")
     for r in rows:
+        marts = r.get("AFFECTED_MARTS")
+        if isinstance(marts, str):
+            try:
+                marts = json.loads(marts)
+            except (json.JSONDecodeError, TypeError):
+                marts = None
+        breaks = f"  [dim]breaks {', '.join(marts)}[/dim]" if marts else ""
         console.print(
             f"  [{SEV_STYLE[r['SEVERITY']]}]{r['SEVERITY']:<8}[/] "
-            f"{r['DATASET_KEY']}.{r['OBJECT_NAME'] or '*'}  {r['CHANGE_TYPE']}"
+            f"{r['DATASET_KEY']}.{r['OBJECT_NAME'] or '*'}  {r['CHANGE_TYPE']}{breaks}"
         )
     return 0
 
