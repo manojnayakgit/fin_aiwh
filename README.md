@@ -98,6 +98,11 @@ python -m control.cli detect --fail-on-breaking
 
 `detect` exits `2` when breaking drift is present, which is what CI gates on.
 
+Note what dbt does with the same scenario: it builds green. The fact models
+cast amounts to `number(18,2)`, so the mart contract holds while the input has
+quietly lost meaning. A contract on the output cannot see that. Only the
+contract on the input can, which is the whole argument for the control plane.
+
 ## Tests
 
 ```bash

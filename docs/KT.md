@@ -350,6 +350,26 @@ python -m control.cli resolve <event_id> --status MERGED --ref https://github.co
 
 ---
 
+## Step 14. First full run, and what the dbt gate did not catch
+
+**Result:** `dbt build` on the live account: PASS=35 WARN=0 ERROR=0. All 13
+models built into STAGING and MARTS, all 22 tests passed.
+
+**With scenario 04 applied, dbt still passed.** This was expected to fail and
+did not. The fact models cast every amount to `number(18,2)` so the mart
+contract holds. The cast rounds the (18,4) input silently. The mart looks
+perfect, and every total is off by up to half a cent per invoice.
+
+**Why this matters more than a failure would have:** a downstream contract
+protects the shape of the output. It cannot know the input lost meaning. Only
+a contract on the input can. The detector raised `TYPE_CHANGED / BREAKING` on
+`GROSS_AMOUNT` and `TAX_AMOUNT` before any model ran; dbt never saw a problem.
+Two gates, and only the upstream one had the information to say no.
+
+The README's earlier claim that both gates catch scenario 04 is corrected.
+
+---
+
 ## Not yet built
 
 → agent: reads OPEN events, proposes contract and dbt changes, opens a PR
