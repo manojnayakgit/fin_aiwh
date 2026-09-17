@@ -514,6 +514,77 @@ OPEN → ESCALATED (issue url stored), or OPEN → DISMISSED via `resolve`.
 
 ---
 
+## Step 19. First live agent run, and two bugs it exposed
+
+**The run worked.** Six open events across four datasets, routed correctly:
+
+| Dataset | Worst | Action taken |
+|---|---|---|
+| RAW.AP_ACCRUAL | MEDIUM | PR #1, contract v1, awaiting review |
+| RAW.AP_INVOICE | LOW | PR #2, contract v2 + staging model, auto merge |
+| RAW.AP_PAYMENT | BREAKING | issue #3 |
+| RAW.AR_INVOICE | BREAKING | issue #4 |
+
+`AR_INVOICE` had one MEDIUM and one BREAKING event. The whole dataset
+escalated, because routing takes the worst event in the group. Correct: you
+cannot adopt half a dataset.
+
+Two defects surfaced that only a live run would find.
+
+### Bug 1: `mark()` mixed string formatting with driver parameters
+
+`"... WHERE EVENT_ID IN (%s)" % ",".join(...)` collided with the connector's
+own `%(name)s` placeholders and raised `TypeError: format requires a mapping`,
+*after* the PR had already been created. Every id is now a bound parameter.
+`publish()` also checks for an open PR on the branch first, so a re-run after
+a crash reuses it instead of failing on an existing branch.
+
+### Bug 2: the agent branched from local HEAD
+
+`git checkout -b` from whatever was checked out swept four unpushed commits
+into PR #2. A contract change arrived carrying 815 lines of unrelated work,
+and squash merging it put all of it on main under the title "Adopt
+APPROVER_ID". The agent now fetches and branches from `origin/<base>`, so a
+drift PR contains exactly the contract file and, if needed, one staging model.
+
+### Bug 3: auto merge is not a gate without branch protection
+
+`gh pr merge --auto` merges as soon as the PR is mergeable. With no branch
+protection on `main`, no status check is required, so PR #2 merged without the
+workflow ever gating it. The agent now reads
+`repos/{owner}/{repo}/branches/<base>/protection` and only enables auto merge
+when required status check contexts exist. Otherwise it opens the PR and says
+plainly why it did not enable auto merge.
+
+**To make the gate real, branch protection must require these contexts on `main`:**
+`rule tests`, `contracts match warehouse`, `dbt build (CI schema)`.
+
+The wider point: an agent that opens pull requests is only as safe as the
+branch it targets. The review gate lives in the repository's settings, not in
+the agent's code, and an agent that assumes otherwise is writing to main.
+
+---
+
+## Step 20. The gate judges only what the PR changes
+
+The `contracts` job originally ran `detect` across the whole warehouse. PR #2
+adopts a LOW change on `AP_INVOICE` and would have failed on unrelated
+BREAKING drift in `AP_PAYMENT`.
+
+`detect` now takes `--dataset` (repeatable). The job diffs the PR against its
+base, reads the `dataset` key out of each changed contract file, and scopes
+the run to those. A PR that changes no contracts is still checked against all
+of them.
+
+Scoped runs also filter the observed schema, so an unrelated ungoverned table
+does not surface as a finding on someone else's PR.
+
+```bash
+python -m control.cli detect --dataset RAW.AP_INVOICE --dry-run --fail-on-breaking
+```
+
+---
+
 ## Not yet built
 
 → verify the gate and the agent live (PR opened by the agent, gate green, LOW merged)

@@ -62,6 +62,7 @@ class Proposal:
     staging_sql: str | None = None
     contract: Contract | None = None          # parsed, set by verify()
     errors: list[str] = field(default_factory=list)
+    merge_note: str = "awaiting review"
 
     @property
     def ok(self) -> bool:
@@ -325,6 +326,25 @@ def _ensure_clean_tree():
         raise SystemExit("working tree is not clean; commit or stash before running the agent")
 
 
+def required_checks(base: str) -> list[str]:
+    """Contexts GitHub will actually wait for before an auto merge completes.
+
+    Empty means auto merge is not a gate: GitHub merges as soon as the PR is
+    mergeable, whether or not the workflow ever ran.
+    """
+    r = subprocess.run(
+        ["gh", "api", f"repos/{{owner}}/{{repo}}/branches/{base}/protection"],
+        cwd=ROOT, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return []
+    try:
+        data = json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return []
+    return data.get("required_status_checks", {}).get("contexts", []) or []
+
+
 def existing_pr(branch: str) -> str | None:
     """A previous run may have opened the PR and failed afterwards. Reuse it."""
     out = subprocess.run(
@@ -345,8 +365,13 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
     existing = existing_pr(branch)
     if existing:
         return existing
+
+    # Branch from the remote base, never from local HEAD. Otherwise any local
+    # commit not yet pushed is swept into the PR, and a contract change arrives
+    # carrying unrelated work.
+    _run(["git", "fetch", "-q", "origin", base])
     try:
-        _run(["git", "checkout", "-b", branch])
+        _run(["git", "checkout", "-q", "-b", branch, f"origin/{base}"])
         proposal.contract_path.write_text(proposal.contract_yaml)
         files = [str(proposal.contract_path.relative_to(ROOT))]
         if proposal.staging_sql is not None:
@@ -366,7 +391,15 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
             "--base", base, "--head", branch, *sum((["--label", l] for l in labels), []),
         ]).splitlines()[-1]
         if auto_merge and proposal.bundle.worst == LOW:
-            _run(["gh", "pr", "merge", url, "--auto", "--squash", "--delete-branch"])
+            if required_checks(base):
+                _run(["gh", "pr", "merge", url, "--auto", "--squash", "--delete-branch"])
+                proposal.merge_note = "auto merge on"
+            else:
+                proposal.merge_note = (
+                    "auto merge NOT enabled: branch protection on "
+                    f"'{base}' requires no status checks, so GitHub would merge "
+                    "without waiting for the gate"
+                )
         return url
     finally:
         _run(["git", "checkout", "-q", base])
