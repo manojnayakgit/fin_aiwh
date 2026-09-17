@@ -120,8 +120,18 @@ def cmd_detect(args):
     contracts = load_contracts()
     s = load_settings()
 
+    if args.dataset:
+        wanted = {d.upper() for d in args.dataset}
+        contracts = [c for c in contracts if c.dataset in wanted]
+        if not contracts:
+            console.print(f"[red]no contracts match {sorted(wanted)}[/red]")
+            return 1
+
     with connect(s) as conn:
         observed = fetch_observed(conn, s.database, s.raw_schema)
+        if args.dataset:
+            # scoped run: only judge the named datasets, never flag others as ungoverned
+            observed = {k: v for k, v in observed.items() if k in wanted}
         findings = diff_all(contracts, observed)
         if not args.dry_run:
             snapshot_observed(conn, run_id, observed)
@@ -292,6 +302,8 @@ def main(argv=None):
     d = sub.add_parser("detect", help="compare the warehouse against registered contracts")
     d.add_argument("--dry-run", action="store_true", help="report only, write nothing")
     d.add_argument("--fail-on-breaking", action="store_true", help="exit 2 on breaking drift")
+    d.add_argument("--dataset", action="append",
+                   help="limit to these datasets, e.g. RAW.AP_INVOICE (repeatable)")
     d.set_defaults(fn=cmd_detect)
 
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)

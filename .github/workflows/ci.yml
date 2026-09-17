@@ -1,8 +1,10 @@
 # fin_aiwh release gate
 #
 # Every pull request is judged twice:
-#   1. Do the contracts in this PR match what the warehouse actually holds?
+#   1. Do the contracts THIS PR CHANGES match what the warehouse actually holds?
 #      A PR that adopts a LOW change passes. A PR that ignores a BREAKING one fails.
+#      Drift on datasets the PR does not touch is the scheduled detector's problem,
+#      not this PR's. A PR that changes no contracts is checked against all of them.
 #   2. Does the dbt project build against the CI schema with mart contracts enforced?
 #
 # Nothing here writes to META. Persisting drift is the scheduled detector's job,
@@ -44,6 +46,7 @@ jobs:
     needs: rules
     steps:
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
       - uses: actions/setup-python@v5
         with: {python-version: "3.11", cache: pip}
       - run: pip install -r requirements.txt
@@ -53,8 +56,24 @@ jobs:
           printf '%s' "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > .secrets/ci_rsa_key.p8
           chmod 600 .secrets/ci_rsa_key.p8
       - run: python -m control.cli ping
+      - name: scope to contracts changed in this PR
+        id: scope
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+          changed=$(git diff --name-only "$base"...HEAD -- contracts/ | grep -E '\.ya?ml$' || true)
+          args=""
+          for f in $changed; do
+            ds=$(python -c "import yaml,sys; print(yaml.safe_load(open('$f'))['dataset'])")
+            args="$args --dataset $ds"
+          done
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+          echo "scope: ${args:-all contracts}"
       - name: detect against this PR's contracts
-        run: python -m control.cli detect --dry-run --fail-on-breaking
+        run: python -m control.cli detect --dry-run --fail-on-breaking ${{ steps.scope.outputs.args }}
 
   build:
     name: dbt build (CI schema)
