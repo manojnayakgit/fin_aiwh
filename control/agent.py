@@ -442,3 +442,67 @@ def mark(conn, event_ids: list[str], status: str, ref: str):
         "WHERE EVENT_ID IN (" + ",".join(keys) + ")",
         params,
     )
+
+
+# --------------------------------------------------------------------------
+# reconciliation: GitHub is the source of truth for what happened to the work
+# --------------------------------------------------------------------------
+
+def _gh_json(args: list[str]) -> dict | None:
+    r = subprocess.run(["gh", *args], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def github_outcome(url: str) -> tuple[str, str] | None:
+    """What became of the pull request or issue behind an event.
+
+    Returns (new_status, human reason), or None when nothing has changed yet or
+    the reference cannot be read.
+    """
+    if "/pull/" in url:
+        d = _gh_json(["pr", "view", url, "--json", "state,mergedAt"])
+        if not d:
+            return None
+        if d.get("mergedAt"):
+            return "MERGED", "pull request merged"
+        if d.get("state") == "CLOSED":
+            return "OPEN", "pull request closed without merging, so the drift is unresolved"
+        return None
+    if "/issues/" in url:
+        d = _gh_json(["issue", "view", url, "--json", "state"])
+        if not d:
+            return None
+        if d.get("state") == "CLOSED":
+            return "DISMISSED", "issue closed"
+        return None
+    return None
+
+
+def pending_events(conn) -> list[dict]:
+    return query(
+        conn,
+        "SELECT EVENT_ID, DATASET_KEY, OBJECT_NAME, SEVERITY, STATUS, RESOLUTION_REF "
+        "FROM FIN_AIWH.META.DRIFT_EVENT "
+        "WHERE STATUS IN ('PROPOSED', 'ESCALATED') AND RESOLUTION_REF IS NOT NULL "
+        "ORDER BY DATASET_KEY, OBJECT_NAME",
+    )
+
+
+def set_status(conn, event_ids: list[str], status: str):
+    params = {"st": status}
+    keys = []
+    for i, e in enumerate(event_ids):
+        params[f"e{i}"] = e
+        keys.append(f"%(e{i})s")
+    resolved = "RESOLVED_AT = SYSDATE(), " if status in ("MERGED", "DISMISSED") else ""
+    execute(
+        conn,
+        f"UPDATE FIN_AIWH.META.DRIFT_EVENT SET STATUS = %(st)s, {resolved}"
+        "RESOLUTION_REF = RESOLUTION_REF WHERE EVENT_ID IN (" + ",".join(keys) + ")",
+        params,
+    )
