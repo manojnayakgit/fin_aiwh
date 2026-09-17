@@ -705,9 +705,57 @@ fingerprint was the key; the missing half was the definition.
 
 ---
 
+## Step 24. Closing the lifecycle: sync
+
+Deduplication stopped the detector shouting about work already in flight. The
+other half was missing: nothing told the control plane when that work finished.
+A merged pull request left its events `PROPOSED` forever, which meant the
+detector would stay silent about that dataset permanently, even if the drift
+came back.
+
+`sync` reads the outcome from GitHub, which is where the decision actually
+happened, and writes it back.
+
+| Reference | GitHub state | Event becomes | Why |
+|---|---|---|---|
+| pull request | merged | `MERGED` | the contract was adopted |
+| pull request | closed, not merged | `OPEN` | someone rejected the fix, the drift is still there |
+| pull request | open | unchanged | still in review |
+| issue | closed | `DISMISSED` | a human decided it is handled |
+| issue | open | unchanged | still being worked |
+
+The closed-without-merging case is the one worth thinking about. Rejecting a
+proposed contract does not make the divergence go away. The event goes back to
+`OPEN` so it is triaged again, rather than quietly disappearing because a
+pull request was closed.
+
+`RESOLVED_AT` is stamped only on the terminal states. Reopening does not fake a
+resolution time.
+
+**Commands:**
+```bash
+python -m control.cli sync --dry-run   # what GitHub says happened
+python -m control.cli sync             # write it back
+python -m control.cli register         # a MERGED contract is not in force until this runs
+```
+
+**The operating order, for a scheduled run:**
+
+```
+sync  →  register  →  detect  →  agent
+```
+
+Reconcile what finished, make merged contracts the agreement of record, compare
+the warehouse against them, then act on what is left. Any other order either
+acts on stale contracts or re-raises work already done.
+
+Seven tests cover the mapping, with `gh` mocked out.
+
+---
+
 ## Not yet built
 
-→ verify the gate and the agent live (PR opened by the agent, gate green, LOW merged)
-→ mark PROPOSED events MERGED automatically when the PR merges
+→ observe the GitHub Actions gate actually running (never yet seen green or red)
+→ branch protection on main, without which auto merge is decoration
+→ run the detector on a schedule, in the sync → register → detect → agent order
 → Jira handoff for MEDIUM events
-→ one page UI to fire scenarios and watch events

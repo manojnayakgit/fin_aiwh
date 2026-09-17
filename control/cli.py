@@ -15,7 +15,8 @@ from .contracts import load_contracts
 from .detect import (
     BREAKING, MEDIUM, diff_all, fetch_observed, new_run_id, persist, snapshot_observed,
 )
-from .agent import BREAKING as _B, bundle_events, draft, escalate, mark, open_events, publish, verify
+from .agent import (BREAKING as _B, bundle_events, draft, escalate, github_outcome,
+                    mark, open_events, pending_events, publish, set_status, verify)
 from .load import load_all
 from .register import register
 from .snow import connect, execute, execute_script, query
@@ -264,6 +265,42 @@ def cmd_agent(args):
     return rc
 
 
+def cmd_sync(args):
+    """Bring event status back in line with what happened on GitHub."""
+    with connect() as conn:
+        pend = pending_events(conn)
+    if not pend:
+        console.print("[green]nothing proposed or escalated, nothing to reconcile[/green]")
+        return 0
+
+    console.print(f"checking {len(pend)} event(s) against GitHub\n")
+    moves: dict[str, list[str]] = {}
+    for e in pend:
+        outcome = github_outcome(e["RESOLUTION_REF"])
+        label = f"{e['DATASET_KEY']}.{e['OBJECT_NAME'] or '*'}"
+        if not outcome:
+            console.print(f"  [dim]{label:<34} {e['STATUS']} still[/dim]")
+            continue
+        new, why = outcome
+        moves.setdefault(new, []).append(e["EVENT_ID"])
+        console.print(f"  {label:<34} [green]{e['STATUS']} → {new}[/green]  [dim]{why}[/dim]")
+
+    if not moves:
+        console.print("\n[dim]nothing to change[/dim]")
+        return 0
+    if args.dry_run:
+        console.print("\n[dim]dry run, nothing written[/dim]")
+        return 0
+
+    with connect() as conn:
+        for status, ids in moves.items():
+            set_status(conn, ids, status)
+    total = sum(len(v) for v in moves.values())
+    console.print(f"\n[green]{total} event(s) updated[/green]")
+    console.print("[dim]a MERGED contract is not in force until you run: register[/dim]")
+    return 0
+
+
 def cmd_status(_args):
     with connect() as conn:
         rows = query(conn, "SELECT * FROM META.OPEN_DRIFT")
@@ -316,6 +353,10 @@ def main(argv=None):
     g.add_argument("--no-merge", action="store_true", help="never enable auto merge, even for LOW")
     g.add_argument("--dataset", help="only this dataset, e.g. RAW.AP_INVOICE")
     g.set_defaults(fn=cmd_agent)
+
+    y = sub.add_parser("sync", help="reconcile event status with GitHub")
+    y.add_argument("--dry-run", action="store_true", help="report only, write nothing")
+    y.set_defaults(fn=cmd_sync)
 
     r = sub.add_parser("resolve", help="close open drift events")
     r.add_argument("event", nargs="*", help="event ids to close")

@@ -37,6 +37,7 @@ ALLOWED = {
     "dbt-build":    ["dbt", "build"],
     "agent-dry":    ["agent", "--dry-run"],
     "agent":        ["agent"],
+    "sync":         ["sync"],
     "resolve-all":  ["resolve", "--all"],
 }
 

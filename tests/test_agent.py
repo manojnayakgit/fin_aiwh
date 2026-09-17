@@ -1,5 +1,7 @@
 """The agent's verification must reject a wrong draft regardless of how
 confident the model was. No API, no warehouse."""
+import json
+
 import pytest
 
 from control.agent import Bundle, Proposal, bundle_events, build_prompt, verify
@@ -187,3 +189,71 @@ def test_unparseable_protection_response_is_not_a_gate(monkeypatch):
     from control import agent
     monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: FakeRun(0, "<html>"))
     assert agent.required_checks("main") == []
+
+
+# --------------------------------------------------------------------------
+# reconciliation with GitHub
+# --------------------------------------------------------------------------
+
+PR = "https://github.com/o/r/pull/2"
+ISSUE = "https://github.com/o/r/issues/3"
+
+
+def _gh(monkeypatch, payload, rc=0):
+    from control import agent
+    monkeypatch.setattr(agent.subprocess, "run",
+                        lambda *a, **k: FakeRun(rc, json.dumps(payload) if payload else ""))
+
+
+def test_a_merged_pr_closes_the_event(monkeypatch):
+    from control import agent
+    _gh(monkeypatch, {"state": "MERGED", "mergedAt": "2026-09-18T10:00:00Z"})
+    assert agent.github_outcome(PR) == ("MERGED", "pull request merged")
+
+
+def test_an_open_pr_changes_nothing(monkeypatch):
+    from control import agent
+    _gh(monkeypatch, {"state": "OPEN", "mergedAt": None})
+    assert agent.github_outcome(PR) is None
+
+
+def test_a_pr_closed_without_merging_reopens_the_event(monkeypatch):
+    """The drift is still there. Someone rejected the fix, not the problem."""
+    from control import agent
+    _gh(monkeypatch, {"state": "CLOSED", "mergedAt": None})
+    status, why = agent.github_outcome(PR)
+    assert status == "OPEN"
+    assert "unresolved" in why
+
+
+def test_a_closed_issue_dismisses_the_event(monkeypatch):
+    from control import agent
+    _gh(monkeypatch, {"state": "CLOSED"})
+    assert agent.github_outcome(ISSUE) == ("DISMISSED", "issue closed")
+
+
+def test_an_open_issue_changes_nothing(monkeypatch):
+    from control import agent
+    _gh(monkeypatch, {"state": "OPEN"})
+    assert agent.github_outcome(ISSUE) is None
+
+
+def test_an_unreadable_reference_changes_nothing(monkeypatch):
+    from control import agent
+    _gh(monkeypatch, None, rc=1)
+    assert agent.github_outcome(PR) is None
+    assert agent.github_outcome("https://example.com/whatever") is None
+
+
+def test_set_status_binds_ids_and_stamps_resolution(monkeypatch):
+    from control import agent
+    captured = {}
+    monkeypatch.setattr(agent, "execute",
+                        lambda c, sql, p: captured.update(sql=sql, params=p))
+    agent.set_status(None, ["a", "b"], "MERGED")
+    assert "%(e0)s,%(e1)s" in captured["sql"]
+    assert "RESOLVED_AT = SYSDATE()" in captured["sql"]
+    assert captured["params"] == {"st": "MERGED", "e0": "a", "e1": "b"}
+
+    agent.set_status(None, ["c"], "OPEN")
+    assert "RESOLVED_AT" not in captured["sql"], "reopening must not stamp a resolution time"
