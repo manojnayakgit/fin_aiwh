@@ -103,6 +103,16 @@ cast amounts to `number(18,2)`, so the mart contract holds while the input has
 quietly lost meaning. A contract on the output cannot see that. Only the
 contract on the input can, which is the whole argument for the control plane.
 
+## The console
+
+```bash
+python -m control.ui          # http://127.0.0.1:8765
+```
+
+Fires scenarios, runs the detector and the agent, shows drift events and
+contracts live. Every button runs the same CLI command you would type, and
+streams its output.
+
 ## Tests
 
 ```bash
@@ -112,7 +122,24 @@ python -m pytest tests -q
 The classification rules are pure functions and need no warehouse, so the logic
 that decides whether a release is blocked is testable in a second.
 
+## The agent
+
+```bash
+python -m control.cli agent --dry-run     # draft and verify, change nothing
+python -m control.cli agent               # PRs for what is safe, issues for what is not
+```
+
+Claude drafts the contract change. The code decides whether it is right: the
+proposal is re-run through the detector's own rules and rejected if it does not
+close the gap exactly, bumps the version wrongly, or drops a column. LOW auto
+merges once the gate is green, MEDIUM waits for a reviewer, BREAKING never gets
+a PR at all.
+
+Auto merge is only enabled when branch protection on the base branch actually
+requires status checks. Without that, GitHub merges as soon as a PR is
+mergeable, and the gate is decoration.
+
 ## Not yet built
 
-Agent authoring of dbt changes and pull requests, the GitHub Actions gate, and
-the Jira handoff. The control plane is the foundation those sit on.
+Jira handoff for MEDIUM events, and marking PROPOSED events MERGED when their
+pull request lands.

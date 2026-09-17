@@ -585,6 +585,50 @@ python -m control.cli detect --dataset RAW.AP_INVOICE --dry-run --fail-on-breaki
 
 ---
 
+## Step 21. The console
+
+**What:** one page served locally that fires scenarios, runs the control plane,
+and shows drift events, contracts and runs as they change.
+
+**Why it runs the CLI rather than calling the code:** every button spawns the
+same `python -m control.cli ...` command a person would type, and streams its
+stdout. There is no second implementation to drift out of sync with the first,
+and what the page shows is exactly what the terminal would show. A demo that
+quietly does something different from the documented commands is worse than no
+demo.
+
+**Why an allowlist:** the page can only run the eight commands named in
+`ALLOWED`, and a scenario button can only name a file that already exists in
+`ops/scenarios/`. The browser cannot ask the server to run an arbitrary path.
+
+**Why it binds to 127.0.0.1:** it runs commands against a live warehouse and a
+live GitHub token. It is not exposed on the network.
+
+**Layout:** left column fires things (scenarios, control plane actions, reset),
+right column is the console output followed by drift events, active contracts
+and the run log. Severity counts sit in the header. State refreshes every 15
+seconds while idle and immediately after any job finishes.
+
+**Commands:**
+```bash
+python -m control.ui          # then open http://127.0.0.1:8765
+```
+
+**Tests:** `tests/test_ui.py` covers the page rendering, all eight scenarios
+being offered with descriptions, state being served, an action outside the
+allowlist being refused, a scenario name that tries to escape the folder being
+refused, and a job streaming to completion with its exit code. No Snowflake,
+no model.
+
+**A demo path that tells the whole story in four clicks:**
+
+1. `detect` → clean, the warehouse matches every contract
+2. `04 money scale changed` → the quiet one
+3. `detect` → two BREAKING events, with the reasoning in plain language
+4. `agent` → a PR for what is safe, an issue for what is not
+
+---
+
 ## Not yet built
 
 → verify the gate and the agent live (PR opened by the agent, gate green, LOW merged)
