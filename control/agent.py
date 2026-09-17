@@ -1,0 +1,386 @@
+"""The drift agent.
+
+Reads open drift events and turns them into pull requests a reviewer can
+merge, or into escalations a reviewer must handle. The model drafts; the code
+decides. Every proposal is verified deterministically against the live schema
+before anything touches git, so a wrong draft is discarded, not merged.
+
+Routing, by the worst event in a dataset:
+  LOW       draft a contract bump, open a PR, enable auto merge
+  MEDIUM    draft a contract bump, open a PR, wait for a human
+  BREAKING  no PR. Open an issue with the evidence and mark the events ESCALATED.
+"""
+import json
+import os
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+from .config import ROOT
+from .contracts import CONTRACT_DIR, Contract, load_contracts, parse_contract
+from .detect import BREAKING, LOW, MEDIUM, ObservedColumn, diff_dataset
+from .snow import execute, query
+
+SEV_ORDER = {LOW: 0, MEDIUM: 1, BREAKING: 2}
+CONTRACT_TOOL = "propose_contract_change"
+
+
+# --------------------------------------------------------------------------
+# data
+# --------------------------------------------------------------------------
+
+@dataclass
+class Bundle:
+    """Every open event for one dataset, plus what the agent needs to reason."""
+    dataset_key: str
+    events: list[dict]
+    contract: Contract | None
+    observed: dict[str, ObservedColumn]
+
+    @property
+    def worst(self) -> str:
+        return max((e["SEVERITY"] for e in self.events), key=SEV_ORDER.get)
+
+    @property
+    def table(self) -> str:
+        return self.dataset_key.split(".")[1]
+
+    @property
+    def event_ids(self) -> list[str]:
+        return [e["EVENT_ID"] for e in self.events]
+
+
+@dataclass
+class Proposal:
+    bundle: Bundle
+    contract_yaml: str
+    pr_title: str
+    pr_body: str
+    reasoning: str
+    staging_sql: str | None = None
+    contract: Contract | None = None          # parsed, set by verify()
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors
+
+    @property
+    def contract_path(self) -> Path:
+        return CONTRACT_DIR / "raw" / f"{self.bundle.table.lower()}.yml"
+
+    @property
+    def staging_path(self) -> Path:
+        return ROOT / "dbt" / "models" / "staging" / f"stg_{self.bundle.table.lower()}.sql"
+
+    @property
+    def branch(self) -> str:
+        v = self.contract.version if self.contract else "x"
+        return f"drift/{self.bundle.table.lower()}-v{v}"
+
+
+# --------------------------------------------------------------------------
+# planning
+# --------------------------------------------------------------------------
+
+def open_events(conn) -> list[dict]:
+    return query(
+        conn,
+        """
+        SELECT EVENT_ID, DATASET_KEY, CONTRACT_VERSION, CHANGE_TYPE, SEVERITY,
+               OBJECT_NAME, BEFORE_STATE, AFTER_STATE, RATIONALE, DETECTED_AT
+        FROM FIN_AIWH.META.DRIFT_EVENT
+        WHERE STATUS = 'OPEN'
+        ORDER BY DATASET_KEY, OBJECT_NAME
+        """,
+    )
+
+
+def bundle_events(
+    events: list[dict],
+    contracts: list[Contract],
+    observed: dict[str, dict[str, ObservedColumn]],
+) -> list[Bundle]:
+    by_key = {c.dataset: c for c in contracts}
+    groups: dict[str, list[dict]] = {}
+    for e in events:
+        groups.setdefault(e["DATASET_KEY"], []).append(e)
+    return [
+        Bundle(
+            dataset_key=k,
+            events=v,
+            contract=by_key.get(k),
+            observed=observed.get(k, {}),
+        )
+        for k, v in sorted(groups.items())
+    ]
+
+
+# --------------------------------------------------------------------------
+# drafting (the only place the model is involved)
+# --------------------------------------------------------------------------
+
+TOOL_SCHEMA = {
+    "name": CONTRACT_TOOL,
+    "description": "Return the updated contract and, only if needed, an updated staging model.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "contract_yaml": {
+                "type": "string",
+                "description": "Complete contract file content. Same format as the current one.",
+            },
+            "staging_sql": {
+                "type": ["string", "null"],
+                "description": "Complete updated dbt staging model, or null if no change is needed.",
+            },
+            "pr_title": {"type": "string", "description": "Under 70 characters, imperative."},
+            "pr_body": {
+                "type": "string",
+                "description": "Markdown. What changed upstream, what this PR adopts, what a "
+                               "reviewer should check. Plain language for a finance reviewer.",
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Two or three sentences on why these choices, for the audit log.",
+            },
+        },
+        "required": ["contract_yaml", "staging_sql", "pr_title", "pr_body", "reasoning"],
+    },
+}
+
+SYSTEM = """You maintain data contracts for a finance data warehouse. A contract is the
+agreement of record for the shape of a source dataset. Upstream changed a dataset
+without telling anyone; the detector has classified the divergence. Your job is to
+draft the contract change that adopts what is safe to adopt.
+
+Rules you must follow exactly:
+- Bump `version` by exactly one. For a dataset with no contract, version is 1.
+- The new contract must describe the live schema exactly: every live column present,
+  with the live type, length or precision/scale, and nullability. Nothing else.
+- Never remove a column that exists in the live schema.
+- Keep every existing description. Write a plausible finance description for a new
+  column from its name and type. Say so in the description if you are inferring.
+- Keep owner, classification, primary_key and freshness unchanged unless the change
+  makes them wrong. For a new dataset use owner `unassigned-needs-review`.
+- Only return staging_sql when a new column should flow through to staging. Keep the
+  model's existing structure and add the column in the same style.
+- Do not invent business rules. If you are unsure, adopt the column plainly and say
+  so in pr_body so a reviewer can decide.
+"""
+
+
+def _observed_json(observed: dict[str, ObservedColumn]) -> str:
+    rows = [
+        {
+            "name": o.name, "type": o.type, "nullable": o.nullable,
+            "length": o.length, "precision": o.precision, "scale": o.scale,
+            "ordinal": o.ordinal,
+        }
+        for o in sorted(observed.values(), key=lambda x: x.ordinal)
+    ]
+    return json.dumps(rows, indent=2)
+
+
+def _events_json(events: list[dict]) -> str:
+    keep = ("CHANGE_TYPE", "SEVERITY", "OBJECT_NAME", "BEFORE_STATE", "AFTER_STATE", "RATIONALE")
+    return json.dumps([{k: e.get(k) for k in keep} for e in events], indent=2, default=str)
+
+
+def build_prompt(bundle: Bundle, example_contract: str) -> str:
+    current = (
+        bundle.contract.source_path.read_text()
+        if bundle.contract and bundle.contract.source_path
+        else None
+    )
+    staging = None
+    p = ROOT / "dbt" / "models" / "staging" / f"stg_{bundle.table.lower()}.sql"
+    if p.exists():
+        staging = p.read_text()
+
+    parts = [f"Dataset: {bundle.dataset_key}", "", "Drift events:", _events_json(bundle.events), ""]
+    parts += ["Live schema from INFORMATION_SCHEMA:", _observed_json(bundle.observed), ""]
+    if current:
+        parts += ["Current contract:", "```yaml", current, "```", ""]
+    else:
+        parts += [
+            "There is no contract for this dataset. Draft version 1 in the same "
+            "format as this example:", "```yaml", example_contract, "```", "",
+        ]
+    if staging:
+        parts += ["Current staging model:", "```sql", staging, "```", ""]
+    parts.append(f"Call {CONTRACT_TOOL} with your proposal.")
+    return "\n".join(parts)
+
+
+def draft(bundle: Bundle, client=None, model: str | None = None) -> Proposal:
+    """Ask the model for a proposal. Returns an unverified Proposal."""
+    if client is None:
+        import anthropic
+        client = anthropic.Anthropic()
+    model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+    example = (CONTRACT_DIR / "raw" / "ap_invoice.yml").read_text()
+    msg = client.messages.create(
+        model=model,
+        max_tokens=4000,
+        system=SYSTEM,
+        tools=[TOOL_SCHEMA],
+        tool_choice={"type": "tool", "name": CONTRACT_TOOL},
+        messages=[{"role": "user", "content": build_prompt(bundle, example)}],
+    )
+    block = next(b for b in msg.content if getattr(b, "type", "") == "tool_use")
+    d = block.input
+    return Proposal(
+        bundle=bundle,
+        contract_yaml=d["contract_yaml"],
+        staging_sql=d.get("staging_sql") or None,
+        pr_title=d["pr_title"],
+        pr_body=d["pr_body"],
+        reasoning=d["reasoning"],
+    )
+
+
+# --------------------------------------------------------------------------
+# verification (deterministic, no model)
+# --------------------------------------------------------------------------
+
+def verify(proposal: Proposal) -> Proposal:
+    """Reject anything the model got wrong. Populates proposal.errors."""
+    b = proposal.bundle
+    errs: list[str] = []
+    tmp = ROOT / ".agent_tmp.yml"
+    try:
+        tmp.write_text(proposal.contract_yaml)
+        new = parse_contract(tmp)
+    except Exception as e:  # noqa: BLE001
+        proposal.errors = [f"contract does not parse: {e}"]
+        return proposal
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+    if new.dataset != b.dataset_key:
+        errs.append(f"dataset is {new.dataset}, expected {b.dataset_key}")
+
+    expected_version = (b.contract.version + 1) if b.contract else 1
+    if new.version != expected_version:
+        errs.append(f"version is {new.version}, expected {expected_version}")
+
+    if b.contract:
+        old_names = {c.name for c in b.contract.columns}
+        dropped = old_names - {c.name for c in new.columns}
+        if dropped:
+            errs.append(f"proposal drops contracted columns {sorted(dropped)}")
+        if new.primary_key != b.contract.primary_key:
+            errs.append("primary key changed")
+
+    residual = diff_dataset(new, b.observed)
+    for f in residual:
+        errs.append(f"still diverges from live: {f.change_type} {f.object_name or ''}".strip())
+
+    if proposal.staging_sql is not None and "source('raw'" not in proposal.staging_sql:
+        errs.append("staging model no longer reads from source('raw', ...)")
+
+    proposal.contract = new
+    proposal.errors = errs
+    return proposal
+
+
+# --------------------------------------------------------------------------
+# publishing (git + gh, runs on the machine that owns the repo)
+# --------------------------------------------------------------------------
+
+def _run(cmd: list[str], **kw) -> str:
+    return subprocess.check_output(cmd, cwd=ROOT, text=True, stderr=subprocess.STDOUT, **kw).strip()
+
+
+LABELS = {
+    "drift": ("0E8A16", "raised by the drift agent"),
+    "low": ("C5DEF5", "additive, safe to auto merge"),
+    "medium": ("FBCA04", "needs a decision"),
+    "breaking": ("B60205", "release gate fails until resolved"),
+}
+
+
+def _ensure_labels():
+    for name, (colour, desc) in LABELS.items():
+        subprocess.run(
+            ["gh", "label", "create", name, "--color", colour, "--description", desc, "--force"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+
+
+def _ensure_clean_tree():
+    if _run(["git", "status", "--porcelain"]):
+        raise SystemExit("working tree is not clean; commit or stash before running the agent")
+
+
+def publish(proposal: Proposal, auto_merge: bool) -> str:
+    """Write files, branch, commit, push, open PR. Returns the PR url."""
+    assert proposal.ok and proposal.contract
+    _ensure_clean_tree()
+    _ensure_labels()
+    base = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    branch = proposal.branch
+    try:
+        _run(["git", "checkout", "-b", branch])
+        proposal.contract_path.write_text(proposal.contract_yaml)
+        files = [str(proposal.contract_path.relative_to(ROOT))]
+        if proposal.staging_sql is not None:
+            proposal.staging_path.write_text(proposal.staging_sql)
+            files.append(str(proposal.staging_path.relative_to(ROOT)))
+        _run(["git", "add", *files])
+        body = (
+            f"{proposal.pr_body}\n\n---\n"
+            f"Agent reasoning: {proposal.reasoning}\n\n"
+            f"Drift events: {', '.join(proposal.bundle.event_ids)}\n"
+        )
+        _run(["git", "commit", "-q", "-m", proposal.pr_title, "-m", body])
+        _run(["git", "push", "-q", "-u", "origin", branch])
+        labels = ["drift", proposal.bundle.worst.lower()]
+        url = _run([
+            "gh", "pr", "create", "--title", proposal.pr_title, "--body", body,
+            "--base", base, "--head", branch, *sum((["--label", l] for l in labels), []),
+        ]).splitlines()[-1]
+        if auto_merge and proposal.bundle.worst == LOW:
+            _run(["gh", "pr", "merge", url, "--auto", "--squash", "--delete-branch"])
+        return url
+    finally:
+        _run(["git", "checkout", "-q", base])
+
+
+def escalate(bundle: Bundle) -> str:
+    """BREAKING gets an issue, never a PR. Returns the issue url."""
+    _ensure_labels()
+    lines = [
+        f"Breaking drift on `{bundle.dataset_key}`. The release gate will fail until this is resolved.",
+        "",
+        "| severity | change | object | why |",
+        "|---|---|---|---|",
+    ]
+    for e in bundle.events:
+        lines.append(f"| {e['SEVERITY']} | {e['CHANGE_TYPE']} | {e['OBJECT_NAME'] or '-'} | {e['RATIONALE']} |")
+    lines += [
+        "",
+        "Options: revert the upstream change, or agree a new contract version through a reviewed PR.",
+        "",
+        f"Drift events: {', '.join(bundle.event_ids)}",
+    ]
+    return _run([
+        "gh", "issue", "create",
+        "--title", f"Breaking drift: {bundle.dataset_key}",
+        "--body", "\n".join(lines),
+        "--label", "drift", "--label", "breaking",
+    ]).splitlines()[-1]
+
+
+def mark(conn, event_ids: list[str], status: str, ref: str):
+    execute(
+        conn,
+        "UPDATE FIN_AIWH.META.DRIFT_EVENT SET STATUS = %(st)s, RESOLUTION_REF = %(ref)s "
+        "WHERE EVENT_ID IN (%s)" % ",".join(f"'{e}'" for e in event_ids),
+        {"st": status, "ref": ref},
+    )

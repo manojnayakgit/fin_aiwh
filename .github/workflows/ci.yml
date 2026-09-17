@@ -1,0 +1,73 @@
+# fin_aiwh release gate
+#
+# Every pull request is judged twice:
+#   1. Do the contracts in this PR match what the warehouse actually holds?
+#      A PR that adopts a LOW change passes. A PR that ignores a BREAKING one fails.
+#   2. Does the dbt project build against the CI schema with mart contracts enforced?
+#
+# Nothing here writes to META. Persisting drift is the scheduled detector's job,
+# the gate only reads.
+name: gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: FIN_AIWH_SVC
+  SNOWFLAKE_ROLE: FIN_AIWH_ENG
+  SNOWFLAKE_WAREHOUSE: FIN_AIWH_WH
+  SNOWFLAKE_DATABASE: FIN_AIWH
+  SNOWFLAKE_SCHEMA: META
+  SNOWFLAKE_PRIVATE_KEY_PATH: .secrets/ci_rsa_key.p8
+
+jobs:
+  rules:
+    name: rule tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest tests -q
+
+  contracts:
+    name: contracts match warehouse
+    runs-on: ubuntu-latest
+    needs: rules
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - name: materialise private key
+        run: |
+          mkdir -p .secrets
+          printf '%s' "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > .secrets/ci_rsa_key.p8
+          chmod 600 .secrets/ci_rsa_key.p8
+      - run: python -m control.cli ping
+      - name: detect against this PR's contracts
+        run: python -m control.cli detect --dry-run --fail-on-breaking
+
+  build:
+    name: dbt build (CI schema)
+    runs-on: ubuntu-latest
+    needs: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+      - name: materialise private key
+        run: |
+          mkdir -p .secrets
+          printf '%s' "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > .secrets/ci_rsa_key.p8
+          chmod 600 .secrets/ci_rsa_key.p8
+      - run: python -m control.cli dbt build -t ci --no-version-check

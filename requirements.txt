@@ -4,3 +4,4 @@ pyyaml==6.0.2
 python-dotenv==1.0.1
 dbt-snowflake==1.8.4
 rich==13.9.2
+anthropic==0.40.0
