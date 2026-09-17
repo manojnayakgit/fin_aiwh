@@ -421,9 +421,102 @@ live and verified against the real account.
 
 ---
 
+# Day 2
+
+## Step 17. The release gate (GitHub Actions)
+
+**Why:** a contract change is a pull request. The gate answers two questions
+on every PR, and blocks the merge if either answer is no.
+
+| Job | Question | How |
+|---|---|---|
+| `rules` | do the classification rules still hold | `pytest tests` |
+| `contracts` | do the contracts in this PR match the live warehouse | `detect --dry-run --fail-on-breaking` |
+| `build` | does dbt build with mart contracts enforced | `dbt build -t ci` into `FIN_AIWH.CI` |
+
+**Why `--dry-run`:** the gate reads, it never writes to META. Persisting events
+is the detector's job on its schedule. A gate that wrote would double count.
+
+**Why a CI schema:** `dbt build -t ci` lands everything in `FIN_AIWH.CI`
+through the `generate_schema_name` macro. PR builds never touch STAGING or
+MARTS.
+
+**Secrets (GitHub → repo → Settings → Secrets → Actions):**
+
+| Secret | Value |
+|---|---|
+| `SNOWFLAKE_ACCOUNT` | `JBOEYJF-CUB76064` |
+| `SNOWFLAKE_PRIVATE_KEY` | full content of `.secrets/fin_aiwh_rsa_key.p8`, BEGIN/END lines included |
+
+For a real MNC the CI user would be a separate service user with its own key
+and a narrower role. The PoC reuses `FIN_AIWH_SVC`.
+
+**File:** `.github/workflows/ci.yml`
+
+---
+
+## Step 18. The drift agent
+
+**What it does:** reads OPEN events, groups them by dataset, and routes by the
+worst event in the group.
+
+| Worst | Action |
+|---|---|
+| LOW | model drafts a contract bump, code verifies it, PR opened, auto merge on once the gate is green |
+| MEDIUM | same draft and verify, PR opened, waits for a human |
+| BREAKING | no PR. GitHub issue with the evidence, events marked ESCALATED |
+
+**The model drafts, the code decides.** This is the design point. Claude is
+given the current contract, the events, the live schema and the staging model,
+and returns a proposal through a forced tool call (structured output, no
+free text to parse). Then `verify()` rejects the proposal if any of these are
+true, without asking the model again:
+
+→ the YAML does not parse
+→ dataset name changed
+→ version is not exactly old + 1 (or 1 for a new dataset)
+→ any contracted column was dropped
+→ primary key changed
+→ the proposed contract still diverges from the live schema (re-runs the detector's own `diff_dataset` on it)
+→ the staging model no longer reads from `source('raw', ...)`
+
+A rejected proposal is printed and skipped. Nothing reaches git.
+
+**Why forced tool use:** the response is a JSON object matching a schema the
+code owns. No markdown fences, no "here is your contract", nothing to strip.
+
+**Why re-running `diff_dataset` on the proposal is the real guard:** the
+agent's output is judged by the same rules that raised the event. If the
+proposal does not close the gap completely, it is wrong by definition.
+
+**Files:** `control/agent.py`, `agent` command in `control/cli.py`,
+`tests/test_agent.py` (10 tests, model mocked out entirely).
+
+**Configuration in `.env`:**
+```
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-5     # optional
+```
+
+**Requires on the machine running it:** `gh` authenticated (`gh auth login`),
+push rights to the repo, clean working tree.
+
+**Commands:**
+```bash
+python -m control.cli agent --dry-run            # draft + verify, print, touch nothing
+python -m control.cli agent                      # PRs, issues, auto merge for LOW
+python -m control.cli agent --no-merge           # PRs but never auto merge
+python -m control.cli agent --dataset RAW.AP_INVOICE
+```
+
+**Event lifecycle:** OPEN → PROPOSED (PR url stored) → MERGED, or
+OPEN → ESCALATED (issue url stored), or OPEN → DISMISSED via `resolve`.
+
+---
+
 ## Not yet built
 
-→ agent: reads OPEN events, proposes contract and dbt changes, opens a PR
-→ GitHub Actions gate: `detect --fail-on-breaking` + `dbt build -t ci` on every PR
+→ verify the gate and the agent live (PR opened by the agent, gate green, LOW merged)
+→ mark PROPOSED events MERGED automatically when the PR merges
 → Jira handoff for MEDIUM events
 → one page UI to fire scenarios and watch events
