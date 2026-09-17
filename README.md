@@ -39,7 +39,7 @@ control/            the control plane: connection, contracts, registration, dete
 ops/sql/            account bootstrap, META control plane DDL, RAW layer DDL
 ops/scenarios/      drift scenarios you can fire at the warehouse on demand
 seeds/              deterministic AP/AR seed data generator
-dbt/                staging and mart models
+dbt/                staging views, marts (AP/AR open items, aging, DSO/DPO), enforced contracts
 tests/              classification rules, tested without a warehouse
 ```
 
@@ -79,6 +79,15 @@ python -m control.cli detect
 ```
 
 A clean run reports zero divergences. That is the baseline.
+
+Then build the transformation layer:
+
+```bash
+python -m control.cli dbt build
+```
+
+`dbt build` runs models and tests together. Mart contracts in `dbt/models/marts/marts.yml`
+are enforced, so a model whose output shape drifts from its declaration does not build.
 
 ## Firing a scenario
 

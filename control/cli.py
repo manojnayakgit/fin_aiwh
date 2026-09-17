@@ -1,6 +1,8 @@
 """fin_aiwh control plane CLI."""
 import argparse
 import json
+import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 
@@ -127,6 +129,24 @@ def cmd_detect(args):
     return 0
 
 
+def cmd_dbt(args):
+    """Run dbt with .env loaded and the key path made absolute."""
+    s = load_settings()
+    env = dict(os.environ)
+    env.update({
+        "SNOWFLAKE_ACCOUNT": s.account,
+        "SNOWFLAKE_USER": s.user,
+        "SNOWFLAKE_PRIVATE_KEY_PATH": str(s.private_key_path),
+        "SNOWFLAKE_ROLE": s.role,
+        "SNOWFLAKE_WAREHOUSE": s.warehouse,
+        "SNOWFLAKE_DATABASE": s.database,
+    })
+    dbt_dir = ROOT / "dbt"
+    cmd = ["dbt", *args.dbt_args, "--project-dir", str(dbt_dir), "--profiles-dir", str(dbt_dir)]
+    console.print(f"[dim]$ {' '.join(cmd)}[/dim]")
+    return subprocess.call(cmd, env=env, cwd=dbt_dir)
+
+
 def cmd_status(_args):
     with connect() as conn:
         rows = query(conn, "SELECT * FROM META.OPEN_DRIFT")
@@ -171,6 +191,10 @@ def main(argv=None):
     d.set_defaults(fn=cmd_detect)
 
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)
+
+    b = sub.add_parser("dbt", help="run dbt with the control plane's connection settings")
+    b.add_argument("dbt_args", nargs=argparse.REMAINDER, help="arguments passed to dbt")
+    b.set_defaults(fn=cmd_dbt)
 
     args = p.parse_args(argv)
     return args.fn(args)

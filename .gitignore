@@ -7,5 +7,4 @@ dbt/target/
 dbt/logs/
 dbt/dbt_packages/
 seeds/out/
-profiles.yml
 .DS_Store

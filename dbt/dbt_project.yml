@@ -1,0 +1,21 @@
+name: fin_aiwh
+version: "0.1.0"
+config-version: 2
+profile: fin_aiwh
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  fin_aiwh:
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +schema: STAGING
+      +materialized: view
+    marts:
+      +schema: MARTS
+      +materialized: table
