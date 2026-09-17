@@ -135,15 +135,17 @@ def cmd_detect(args):
         findings = diff_all(contracts, observed)
         if not args.dry_run:
             snapshot_observed(conn, run_id, observed)
-            written = persist(conn, run_id, findings, contracts)
+            written, suppressed = persist(conn, run_id, findings, contracts)
             _log_run(conn, run_id, "DETECT", started, len(observed), written, "SUCCESS")
         else:
-            written = 0
+            written = suppressed = 0
 
     console.print(
         f"run [bold]{run_id}[/bold]  scanned {len(observed)} datasets  "
         f"found {len(findings)} divergences"
-        + ("  [dim](dry run, nothing written)[/dim]" if args.dry_run else f"  new {written}")
+        + ("  [dim](dry run, nothing written)[/dim]" if args.dry_run
+           else f"  new {written}"
+                + (f"  [dim]already being worked on {suppressed}[/dim]" if suppressed else ""))
     )
 
     if not findings:
