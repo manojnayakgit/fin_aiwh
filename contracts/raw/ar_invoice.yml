@@ -1,0 +1,81 @@
+# fin_aiwh data contract
+#
+# This file is the agreement, not a description. The warehouse is compared
+# against it on every detector run. Changing it is a reviewed pull request.
+
+dataset: RAW.AR_INVOICE
+version: 1
+owner: finance-data-engineering
+classification: financial-restricted
+description: Accounts receivable invoice header.
+
+primary_key:
+  - INVOICE_ID
+
+freshness:
+  column: LOADED_AT
+  max_lag_hours: 24
+
+# Columns the contract guarantees. A column present here and missing in the
+# warehouse is a break. A column in the warehouse and missing here is
+# ungoverned and must be adopted or rejected explicitly.
+columns:
+  - name: INVOICE_ID
+    type: TEXT
+    length: 32
+    nullable: false
+    description: Surrogate invoice key from the ERP.
+  - name: CUSTOMER_ID
+    type: TEXT
+    length: 32
+    nullable: false
+    description: References AR_CUSTOMER.CUSTOMER_ID.
+  - name: ENTITY_CODE
+    type: TEXT
+    length: 8
+    nullable: false
+    description: Legal entity recognising the receivable.
+  - name: INVOICE_NUMBER
+    type: TEXT
+    length: 64
+    nullable: false
+    description: Our invoice number issued to the customer.
+  - name: INVOICE_DATE
+    type: DATE
+    nullable: false
+    description: Date on the invoice document.
+  - name: DUE_DATE
+    type: DATE
+    nullable: false
+    description: Contractual payment due date.
+  - name: CURRENCY_CODE
+    type: TEXT
+    length: 3
+    nullable: false
+    description: ISO 4217 transaction currency.
+  - name: GROSS_AMOUNT
+    type: NUMBER
+    precision: 18
+    scale: 2
+    nullable: false
+    description: Invoice total including tax, transaction currency.
+  - name: TAX_AMOUNT
+    type: NUMBER
+    precision: 18
+    scale: 2
+    nullable: true
+    description: Tax portion of the gross amount.
+  - name: STATUS
+    type: TEXT
+    length: 16
+    nullable: false
+    description: OPEN, PAID, PARTIAL, CANCELLED, DISPUTED.
+  - name: SOURCE_SYSTEM
+    type: TEXT
+    length: 32
+    nullable: false
+    description: Originating ERP instance.
+  - name: LOADED_AT
+    type: TIMESTAMP_NTZ
+    nullable: false
+    description: Ingestion watermark.

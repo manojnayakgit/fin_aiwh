@@ -1,0 +1,63 @@
+# fin_aiwh data contract
+#
+# This file is the agreement, not a description. The warehouse is compared
+# against it on every detector run. Changing it is a reviewed pull request.
+
+dataset: RAW.AP_INVOICE_LINE
+version: 1
+owner: finance-data-engineering
+classification: financial-restricted
+description: Accounts payable invoice line detail with GL coding.
+
+primary_key:
+  - LINE_ID
+
+freshness:
+  column: LOADED_AT
+  max_lag_hours: 24
+
+# Columns the contract guarantees. A column present here and missing in the
+# warehouse is a break. A column in the warehouse and missing here is
+# ungoverned and must be adopted or rejected explicitly.
+columns:
+  - name: LINE_ID
+    type: TEXT
+    length: 40
+    nullable: false
+    description: Surrogate line key.
+  - name: INVOICE_ID
+    type: TEXT
+    length: 32
+    nullable: false
+    description: References AP_INVOICE.INVOICE_ID.
+  - name: LINE_NUMBER
+    type: NUMBER
+    precision: 9
+    scale: 0
+    nullable: false
+    description: Line sequence within the invoice.
+  - name: COST_CENTER
+    type: TEXT
+    length: 16
+    nullable: true
+    description: Cost centre charged.
+  - name: GL_ACCOUNT
+    type: TEXT
+    length: 16
+    nullable: false
+    description: GL account the line posts to.
+  - name: LINE_AMOUNT
+    type: NUMBER
+    precision: 18
+    scale: 2
+    nullable: false
+    description: Line net amount, transaction currency.
+  - name: DESCRIPTION
+    type: TEXT
+    length: 500
+    nullable: true
+    description: Free text line description.
+  - name: LOADED_AT
+    type: TIMESTAMP_NTZ
+    nullable: false
+    description: Ingestion watermark.

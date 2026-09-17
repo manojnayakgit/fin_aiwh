@@ -1,0 +1,11 @@
+.secrets/
+.env
+.venv/
+__pycache__/
+*.pyc
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+seeds/out/
+profiles.yml
+.DS_Store

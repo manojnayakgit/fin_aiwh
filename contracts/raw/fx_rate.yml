@@ -1,0 +1,54 @@
+# fin_aiwh data contract
+#
+# This file is the agreement, not a description. The warehouse is compared
+# against it on every detector run. Changing it is a reviewed pull request.
+
+dataset: RAW.FX_RATE
+version: 1
+owner: finance-data-engineering
+classification: financial-restricted
+description: Daily FX rates used to translate subledger amounts to reporting currency.
+
+primary_key:
+  - RATE_DATE
+  - FROM_CURRENCY
+  - TO_CURRENCY
+  - RATE_TYPE
+
+freshness:
+  column: LOADED_AT
+  max_lag_hours: 24
+
+# Columns the contract guarantees. A column present here and missing in the
+# warehouse is a break. A column in the warehouse and missing here is
+# ungoverned and must be adopted or rejected explicitly.
+columns:
+  - name: RATE_DATE
+    type: DATE
+    nullable: false
+    description: Rate effective date.
+  - name: FROM_CURRENCY
+    type: TEXT
+    length: 3
+    nullable: false
+    description: ISO 4217 source currency.
+  - name: TO_CURRENCY
+    type: TEXT
+    length: 3
+    nullable: false
+    description: ISO 4217 target currency.
+  - name: RATE
+    type: NUMBER
+    precision: 18
+    scale: 8
+    nullable: false
+    description: Units of target per one unit of source.
+  - name: RATE_TYPE
+    type: TEXT
+    length: 16
+    nullable: false
+    description: SPOT, CLOSING, AVERAGE.
+  - name: LOADED_AT
+    type: TIMESTAMP_NTZ
+    nullable: false
+    description: Ingestion watermark.
