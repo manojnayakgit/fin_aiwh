@@ -629,6 +629,31 @@ no model.
 
 ---
 
+## Step 22. What the first console session exposed
+
+**Scenarios were not re-runnable.** `apply 01_additive_column` failed with
+`column 'APPROVER_ID' already exists`. Fine for a script you run once by hand,
+wrong for a button. Every scenario is now idempotent: `ADD COLUMN IF NOT
+EXISTS`, `DROP COLUMN IF EXISTS`, and the two that rebuild a table already
+used `CREATE OR REPLACE`. Firing one twice is a no-op.
+
+**The event table drowned the signal.** Thirty-plus rows, nearly all
+`DISMISSED` from earlier runs, with two `ESCALATED` and three `PROPOSED` buried
+among them. The console now shows open events by default and puts
+`n closed hidden` in the section header as a toggle.
+
+**The table overflowed sideways** because the `why` column is a full sentence.
+Fixed columns plus wrapping now, so the reasoning stays readable without a
+horizontal scrollbar.
+
+**Contracts still read v1 in the registry** while `contracts/raw/ap_invoice.yml`
+is v2 on disk, because the agent's PR merged but `register` has not run since.
+That is correct: registration is a deliberate act, not a side effect of a file
+changing. Run `register` after merging a contract PR, or the detector keeps
+judging against the old version. A scheduled detector should register first.
+
+---
+
 ## Not yet built
 
 → verify the gate and the agent live (PR opened by the agent, gate green, LOW merged)

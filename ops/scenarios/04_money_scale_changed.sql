@@ -1,4 +1,5 @@
 -- Scenario: the scale on the monetary columns moves from 2 to 4 decimal places.
+-- Re-runnable: firing it twice is a no-op, because the console is a button.
 -- Expected: TYPE_CHANGED / BREAKING on GROSS_AMOUNT and TAX_AMOUNT, nothing else.
 -- This is the quiet one. Nothing errors, every total just stops agreeing with
 -- the subledger.
