@@ -155,3 +155,35 @@ def test_mark_binds_every_event_id_as_a_parameter():
     assert "%(e0)s,%(e1)s" in captured["sql"]
     assert "%s" not in captured["sql"].replace("%(", "")
     assert captured["params"] == {"st": "PROPOSED", "ref": "https://x/pr/1", "e0": "a1", "e1": "b2"}
+
+
+class FakeRun:
+    """Stand in for subprocess.run when probing branch protection."""
+    def __init__(self, returncode, stdout=""):
+        self.returncode, self.stdout = returncode, stdout
+
+
+def test_no_branch_protection_means_no_required_checks(monkeypatch):
+    from control import agent
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: FakeRun(1, ""))
+    assert agent.required_checks("main") == []
+
+
+def test_protection_without_status_checks_is_not_a_gate(monkeypatch):
+    from control import agent
+    body = '{"required_pull_request_reviews": {}}'
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: FakeRun(0, body))
+    assert agent.required_checks("main") == []
+
+
+def test_required_contexts_are_returned(monkeypatch):
+    from control import agent
+    body = '{"required_status_checks": {"contexts": ["rule tests", "dbt build (CI schema)"]}}'
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: FakeRun(0, body))
+    assert agent.required_checks("main") == ["rule tests", "dbt build (CI schema)"]
+
+
+def test_unparseable_protection_response_is_not_a_gate(monkeypatch):
+    from control import agent
+    monkeypatch.setattr(agent.subprocess, "run", lambda *a, **k: FakeRun(0, "<html>"))
+    assert agent.required_checks("main") == []

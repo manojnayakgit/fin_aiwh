@@ -256,8 +256,9 @@ def cmd_agent(args):
         url = publish(p, auto_merge=not args.no_merge)
         with connect(s) as conn:
             mark(conn, b.event_ids, "PROPOSED", url)
-        merged = "auto merge on" if (b.worst == "LOW" and not args.no_merge) else "awaiting review"
-        console.print(f"  [green]PR[/green] {url}  ({merged})\n")
+        style = "yellow" if "NOT enabled" in p.merge_note else "dim"
+        console.print(f"  [green]PR[/green] {url}")
+        console.print(f"  [{style}]{p.merge_note}[/]\n")
     return rc
 
 
