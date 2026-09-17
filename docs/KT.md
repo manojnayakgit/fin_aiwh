@@ -398,6 +398,29 @@ python -m control.cli detect                             # clean
 
 ---
 
+## Step 16. All scenarios verified on the live account
+
+Reset to v1, clean baseline confirmed, then scenarios 01, 02, 03, 05, 06, 07
+applied in one pass and detected together.
+
+| Scenario | Object | Verdict | Expected |
+|---|---|---|---|
+| 05 | AP_PAYMENT.BANK_REF | COLUMN_REMOVED / BREAKING | yes |
+| 06 | AR_INVOICE.STATUS | NULLABILITY_RELAXED / BREAKING | yes |
+| 07 | AP_ACCRUAL | DATASET_UNGOVERNED / MEDIUM | yes |
+| 02 | AR_INVOICE.REVENUE_STREAM | COLUMN_ADDED / MEDIUM | yes |
+| 01 | AP_INVOICE.APPROVER_ID | COLUMN_ADDED / LOW | yes |
+| 03 | AP_INVOICE.INVOICE_NUMBER | TYPE_CHANGED / LOW | yes |
+
+Six divergences, six correct verdicts, ordered worst first, each with its
+reasoning stored in `META.DRIFT_EVENT`. Scenario 04 was verified separately
+in step 14.
+
+**Day one scope closed:** foundation, contracts, detection, dbt layer, all
+live and verified against the real account.
+
+---
+
 ## Not yet built
 
 → agent: reads OPEN events, proposes contract and dbt changes, opens a PR
