@@ -4,7 +4,7 @@
 # against it on every detector run. Changing it is a reviewed pull request.
 
 dataset: RAW.AP_INVOICE
-version: 1
+version: 2
 owner: finance-data-engineering
 classification: financial-restricted
 description: Accounts payable invoice header.
@@ -37,7 +37,7 @@ columns:
     description: Legal entity booking the liability.
   - name: INVOICE_NUMBER
     type: TEXT
-    length: 64
+    length: 128
     nullable: false
     description: Vendor's own invoice number.
   - name: INVOICE_DATE
@@ -79,3 +79,8 @@ columns:
     type: TIMESTAMP_NTZ
     nullable: false
     description: Ingestion watermark.
+  - name: APPROVER_ID
+    type: TEXT
+    length: 32
+    nullable: true
+    description: Identifier of the user who approved the invoice (inferred from column name).
