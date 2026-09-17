@@ -370,6 +370,34 @@ The README's earlier claim that both gates catch scenario 04 is corrected.
 
 ---
 
+## Step 15. Reset that did not reset, and the guard that came out of it
+
+**What happened:** `99_reset.sql` was built by copying the RAW DDL and
+stripping its `USE SCHEMA RAW` line. The eight `CREATE OR REPLACE TABLE`
+statements then ran unqualified and landed in the session's default schema,
+which for the service user is `META`. RAW was untouched, `load` reloaded into
+the still-broken `AP_INVOICE`, and `detect` reported the same 13 breaks.
+
+**Rule that follows:** every table name in every SQL file is three part,
+`FIN_AIWH.<SCHEMA>.<TABLE>`. No file depends on `USE` state.
+
+**Enforcement:** `apply` now scans the file (comments stripped) for any
+`CREATE|ALTER|DROP TABLE` with fewer than three name parts and refuses to run
+it. Cheaper than finding eight stray tables next month.
+
+**Cleanup:** `99_reset.sql` also drops the eight empty copies from `META`.
+Safe to repeat.
+
+**Commands:**
+```bash
+python -m control.cli apply ops/scenarios/99_reset.sql   # now genuinely rebuilds RAW
+python -m control.cli load
+python -m control.cli resolve --all
+python -m control.cli detect                             # clean
+```
+
+---
+
 ## Not yet built
 
 → agent: reads OPEN events, proposes contract and dbt changes, opens a PR
