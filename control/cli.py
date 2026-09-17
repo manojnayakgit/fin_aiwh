@@ -15,6 +15,7 @@ from .contracts import load_contracts
 from .detect import (
     BREAKING, MEDIUM, diff_all, fetch_observed, new_run_id, persist, snapshot_observed,
 )
+from .agent import BREAKING as _B, bundle_events, draft, escalate, mark, open_events, publish, verify
 from .load import load_all
 from .register import register
 from .snow import connect, execute, execute_script, query
@@ -193,6 +194,63 @@ def cmd_resolve(args):
     return 0
 
 
+def cmd_agent(args):
+    s = load_settings()
+    contracts = load_contracts()
+    with connect(s) as conn:
+        events = open_events(conn)
+        observed = fetch_observed(conn, s.database, s.raw_schema)
+    bundles = bundle_events(events, contracts, observed)
+    if args.dataset:
+        bundles = [b for b in bundles if b.dataset_key == args.dataset.upper()]
+    if not bundles:
+        console.print("[green]no open drift, nothing to do[/green]")
+        return 0
+
+    console.print(f"{len(events)} open event(s) across {len(bundles)} dataset(s)\n")
+    rc = 0
+    for b in bundles:
+        console.print(f"[bold]{b.dataset_key}[/bold]  worst [{SEV_STYLE[b.worst]}]{b.worst}[/]  "
+                      f"{len(b.events)} event(s)")
+
+        if b.worst == BREAKING:
+            if args.dry_run:
+                console.print("  → would escalate (issue), no PR\n")
+                continue
+            url = escalate(b)
+            with connect(s) as conn:
+                mark(conn, b.event_ids, "ESCALATED", url)
+            console.print(f"  [red]escalated[/red] {url}\n")
+            continue
+
+        p = verify(draft(b))
+        if not p.ok:
+            rc = 1
+            console.print("  [red]proposal rejected by verification:[/red]")
+            for e in p.errors:
+                console.print(f"    {e}")
+            console.print("")
+            continue
+
+        console.print(f"  proposal: [bold]{p.pr_title}[/bold]  → contract v{p.contract.version}"
+                      + ("  + staging model" if p.staging_sql else ""))
+        console.print(f"  [dim]{p.reasoning}[/dim]")
+        if args.dry_run:
+            console.print("  [dim]dry run, printing contract:[/dim]")
+            console.print(p.contract_yaml)
+            if p.staging_sql:
+                console.print(p.staging_sql)
+            console.print("")
+            continue
+
+        url = publish(p, auto_merge=not args.no_merge)
+        with connect(s) as conn:
+            mark(conn, b.event_ids, "PROPOSED", url)
+        merged = "auto merge on" if (b.worst == "LOW" and not args.no_merge) else "awaiting review"
+        console.print(f"  [green]PR[/green] {url}  ({merged})\n")
+    return rc
+
+
 def cmd_status(_args):
     with connect() as conn:
         rows = query(conn, "SELECT * FROM META.OPEN_DRIFT")
@@ -238,10 +296,16 @@ def main(argv=None):
 
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)
 
+    g = sub.add_parser("agent", help="turn open drift into PRs or escalations")
+    g.add_argument("--dry-run", action="store_true", help="draft and verify, touch nothing")
+    g.add_argument("--no-merge", action="store_true", help="never enable auto merge, even for LOW")
+    g.add_argument("--dataset", help="only this dataset, e.g. RAW.AP_INVOICE")
+    g.set_defaults(fn=cmd_agent)
+
     r = sub.add_parser("resolve", help="close open drift events")
     r.add_argument("event", nargs="*", help="event ids to close")
     r.add_argument("--all", action="store_true", help="close every OPEN event")
-    r.add_argument("--status", default="DISMISSED", choices=["DISMISSED", "MERGED"])
+    r.add_argument("--status", default="DISMISSED", choices=["DISMISSED", "MERGED", "PROPOSED", "ESCALATED"])
     r.add_argument("--ref", default=None, help="PR url or ticket that resolved it")
     r.set_defaults(fn=cmd_resolve)
 

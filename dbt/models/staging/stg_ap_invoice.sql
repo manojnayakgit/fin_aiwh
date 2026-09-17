@@ -11,5 +11,6 @@ select
     gross_amount - coalesce(tax_amount, 0) as net_amount,
     upper(status)             as status,
     source_system,
-    loaded_at
+    loaded_at,
+    approver_id
 from {{ source('raw', 'AP_INVOICE') }}
