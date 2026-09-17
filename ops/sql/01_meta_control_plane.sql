@@ -2,13 +2,11 @@
 -- The registry of record for what each dataset is contractually allowed to look like,
 -- what it actually looks like, and every divergence between the two.
 
-USE ROLE FIN_AIWH_ENG;
-USE DATABASE FIN_AIWH;
-USE SCHEMA META;
+-- Every name is fully qualified so the file does not depend on session state.
 
 -- Registered contract versions. Append only. A contract is never edited in place;
 -- a change lands as a new version with a new hash, traceable to a git commit.
-CREATE TABLE IF NOT EXISTS CONTRACT_REGISTRY (
+CREATE TABLE IF NOT EXISTS FIN_AIWH.META.CONTRACT_REGISTRY (
     CONTRACT_KEY      VARCHAR      NOT NULL,   -- e.g. RAW.AP_INVOICE
     VERSION           NUMBER       NOT NULL,
     SPEC_HASH         VARCHAR(64)  NOT NULL,   -- sha256 of the canonical YAML
@@ -22,7 +20,7 @@ CREATE TABLE IF NOT EXISTS CONTRACT_REGISTRY (
 );
 
 -- Point in time snapshot of what the warehouse actually holds.
-CREATE TABLE IF NOT EXISTS OBSERVED_SCHEMA (
+CREATE TABLE IF NOT EXISTS FIN_AIWH.META.OBSERVED_SCHEMA (
     RUN_ID            VARCHAR      NOT NULL,
     OBSERVED_AT       TIMESTAMP_NTZ NOT NULL DEFAULT SYSDATE(),
     DATASET_KEY       VARCHAR      NOT NULL,
@@ -36,7 +34,7 @@ CREATE TABLE IF NOT EXISTS OBSERVED_SCHEMA (
 );
 
 -- Every divergence between contract and reality, classified and triaged.
-CREATE TABLE IF NOT EXISTS DRIFT_EVENT (
+CREATE TABLE IF NOT EXISTS FIN_AIWH.META.DRIFT_EVENT (
     EVENT_ID          VARCHAR      NOT NULL,
     RUN_ID            VARCHAR      NOT NULL,
     DETECTED_AT       TIMESTAMP_NTZ NOT NULL DEFAULT SYSDATE(),
@@ -54,7 +52,7 @@ CREATE TABLE IF NOT EXISTS DRIFT_EVENT (
 );
 
 -- One row per detector execution, so runs are auditable even when nothing drifted.
-CREATE TABLE IF NOT EXISTS RUN_LOG (
+CREATE TABLE IF NOT EXISTS FIN_AIWH.META.RUN_LOG (
     RUN_ID            VARCHAR      NOT NULL,
     STARTED_AT        TIMESTAMP_NTZ NOT NULL,
     FINISHED_AT       TIMESTAMP_NTZ,
@@ -66,16 +64,16 @@ CREATE TABLE IF NOT EXISTS RUN_LOG (
 );
 
 -- Convenience view: the active contract for each dataset.
-CREATE OR REPLACE VIEW ACTIVE_CONTRACT AS
+CREATE OR REPLACE VIEW FIN_AIWH.META.ACTIVE_CONTRACT AS
 SELECT * EXCLUDE (RN) FROM (
     SELECT r.*, ROW_NUMBER() OVER (PARTITION BY CONTRACT_KEY ORDER BY VERSION DESC) AS RN
-    FROM CONTRACT_REGISTRY r
+    FROM FIN_AIWH.META.CONTRACT_REGISTRY r
     WHERE IS_ACTIVE
 ) WHERE RN = 1;
 
 -- Convenience view: what needs a human or an agent right now.
-CREATE OR REPLACE VIEW OPEN_DRIFT AS
+CREATE OR REPLACE VIEW FIN_AIWH.META.OPEN_DRIFT AS
 SELECT DATASET_KEY, CHANGE_TYPE, SEVERITY, OBJECT_NAME, RATIONALE, DETECTED_AT, EVENT_ID
-FROM DRIFT_EVENT
+FROM FIN_AIWH.META.DRIFT_EVENT
 WHERE STATUS = 'OPEN'
 ORDER BY CASE SEVERITY WHEN 'BREAKING' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END, DETECTED_AT;

@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -55,13 +56,38 @@ def cmd_ping(_args):
     return 0
 
 
+_DDL = re.compile(
+    r"\b(CREATE(?:\s+OR\s+REPLACE)?\s+(?:TRANSIENT\s+|TEMPORARY\s+)?TABLE|ALTER\s+TABLE|DROP\s+TABLE)"
+    r"(?:\s+IF\s+(?:NOT\s+)?EXISTS)?\s+([A-Za-z_][\w.]*)",
+    re.IGNORECASE,
+)
+
+
+def _unqualified_ddl(sql: str) -> list[str]:
+    """Table DDL that names fewer than three parts depends on session state."""
+    stripped = re.sub(r"--[^\n]*", "", sql)
+    return [
+        f"{m.group(1)} {m.group(2)}"
+        for m in _DDL.finditer(stripped)
+        if m.group(2).count(".") < 2
+    ]
+
+
 def cmd_apply(args):
     path = ROOT / args.path
     if not path.exists():
         console.print(f"[red]no such file:[/red] {args.path}")
         return 1
+    sql = path.read_text()
+    bad = _unqualified_ddl(sql)
+    if bad:
+        console.print("[red]refusing to apply: unqualified table names in DDL[/red]")
+        for b in bad:
+            console.print(f"  {b}")
+        console.print("[dim]use FIN_AIWH.<SCHEMA>.<TABLE> so the statement cannot land in the wrong schema[/dim]")
+        return 1
     with connect() as conn:
-        n = execute_script(conn, path.read_text())
+        n = execute_script(conn, sql)
     console.print(f"[green]applied[/green] {args.path} ({n} statements)")
     return 0
 
