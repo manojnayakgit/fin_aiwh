@@ -1,0 +1,61 @@
+# fin_aiwh data contract
+#
+# This file is the agreement, not a description. The warehouse is compared
+# against it on every detector run. Changing it is a reviewed pull request.
+
+dataset: RAW.AR_RECEIPT
+version: 1
+owner: finance-data-engineering
+classification: financial-restricted
+description: Cash receipts applied against AR invoices.
+
+primary_key:
+  - RECEIPT_ID
+
+freshness:
+  column: LOADED_AT
+  max_lag_hours: 24
+
+# Columns the contract guarantees. A column present here and missing in the
+# warehouse is a break. A column in the warehouse and missing here is
+# ungoverned and must be adopted or rejected explicitly.
+columns:
+  - name: RECEIPT_ID
+    type: TEXT
+    length: 32
+    nullable: false
+    description: Surrogate receipt key.
+  - name: INVOICE_ID
+    type: TEXT
+    length: 32
+    nullable: false
+    description: References AR_INVOICE.INVOICE_ID.
+  - name: RECEIPT_DATE
+    type: DATE
+    nullable: false
+    description: Value date of the receipt.
+  - name: CURRENCY_CODE
+    type: TEXT
+    length: 3
+    nullable: false
+    description: ISO 4217 receipt currency.
+  - name: RECEIVED_AMOUNT
+    type: NUMBER
+    precision: 18
+    scale: 2
+    nullable: false
+    description: Amount applied, receipt currency.
+  - name: PAYMENT_METHOD
+    type: TEXT
+    length: 16
+    nullable: true
+    description: ACH, WIRE, CHECK, SEPA.
+  - name: BANK_REF
+    type: TEXT
+    length: 64
+    nullable: true
+    description: Bank reference for reconciliation.
+  - name: LOADED_AT
+    type: TIMESTAMP_NTZ
+    nullable: false
+    description: Ingestion watermark.

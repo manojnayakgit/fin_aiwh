@@ -1,0 +1,180 @@
+"""fin_aiwh control plane CLI."""
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+
+from rich.console import Console
+from rich.table import Table
+
+from .config import ROOT, load_settings
+from .contracts import load_contracts
+from .detect import (
+    BREAKING, MEDIUM, diff_all, fetch_observed, new_run_id, persist, snapshot_observed,
+)
+from .load import load_all
+from .register import register
+from .snow import connect, execute, execute_script, query
+
+console = Console()
+SEV_STYLE = {"BREAKING": "bold red", "MEDIUM": "yellow", "LOW": "cyan"}
+
+
+def _log_run(conn, run_id: str, run_type: str, started, scanned, events, status, detail=None):
+    execute(
+        conn,
+        """
+        INSERT INTO META.RUN_LOG
+          (RUN_ID, STARTED_AT, FINISHED_AT, RUN_TYPE, DATASETS_SCANNED,
+           EVENTS_RAISED, STATUS, DETAIL)
+        SELECT %(run_id)s, %(started)s, SYSDATE(), %(run_type)s, %(scanned)s,
+               %(events)s, %(status)s, TRY_PARSE_JSON(%(detail)s)
+        """,
+        {
+            "run_id": run_id, "started": started.replace(tzinfo=None),
+            "run_type": run_type, "scanned": scanned, "events": events,
+            "status": status, "detail": json.dumps(detail) if detail else None,
+        },
+    )
+
+
+def cmd_ping(_args):
+    s = load_settings()
+    with connect(s) as conn:
+        r = query(
+            conn,
+            "SELECT CURRENT_ACCOUNT() A, CURRENT_USER() U, CURRENT_ROLE() R, "
+            "CURRENT_WAREHOUSE() W, CURRENT_DATABASE() D, CURRENT_VERSION() V",
+        )[0]
+    console.print("[green]connected[/green]")
+    for k, label in [("A", "account"), ("U", "user"), ("R", "role"),
+                     ("W", "warehouse"), ("D", "database"), ("V", "snowflake")]:
+        console.print(f"  {label:<10} {r[k]}")
+    return 0
+
+
+def cmd_apply(args):
+    path = ROOT / args.path
+    if not path.exists():
+        console.print(f"[red]no such file:[/red] {args.path}")
+        return 1
+    with connect() as conn:
+        n = execute_script(conn, path.read_text())
+    console.print(f"[green]applied[/green] {args.path} ({n} statements)")
+    return 0
+
+
+def cmd_load(args):
+    with connect() as conn:
+        results = load_all(conn, args.tables or None)
+    for table, n in results:
+        console.print(f"  [green]loaded[/green] {table:<18} {n:>8,} rows")
+    return 0
+
+
+def cmd_register(_args):
+    contracts = load_contracts()
+    console.print(f"loaded {len(contracts)} contracts from contracts/")
+    with connect() as conn:
+        result = register(conn, contracts)
+    for k in ("added", "updated"):
+        for d in result[k]:
+            console.print(f"  [green]{k[:-1]:<8}[/green] {d}")
+    if result["unchanged"]:
+        console.print(f"  [dim]unchanged {len(result['unchanged'])}[/dim]")
+    return 0
+
+
+def cmd_detect(args):
+    started = datetime.now(timezone.utc)
+    run_id = new_run_id()
+    contracts = load_contracts()
+    s = load_settings()
+
+    with connect(s) as conn:
+        observed = fetch_observed(conn, s.database, s.raw_schema)
+        findings = diff_all(contracts, observed)
+        if not args.dry_run:
+            snapshot_observed(conn, run_id, observed)
+            written = persist(conn, run_id, findings, contracts)
+            _log_run(conn, run_id, "DETECT", started, len(observed), written, "SUCCESS")
+        else:
+            written = 0
+
+    console.print(
+        f"run [bold]{run_id}[/bold]  scanned {len(observed)} datasets  "
+        f"found {len(findings)} divergences"
+        + ("  [dim](dry run, nothing written)[/dim]" if args.dry_run else f"  new {written}")
+    )
+
+    if not findings:
+        console.print("[green]warehouse matches every registered contract[/green]")
+        return 0
+
+    table = Table(show_lines=False, header_style="bold")
+    for col in ("severity", "dataset", "change", "object", "why"):
+        table.add_column(col, overflow="fold")
+    for f in findings:
+        table.add_row(
+            f"[{SEV_STYLE[f.severity]}]{f.severity}[/]",
+            f.dataset_key, f.change_type, f.object_name or "-", f.rationale,
+        )
+    console.print(table)
+
+    if args.fail_on_breaking and any(f.severity == BREAKING for f in findings):
+        console.print("[bold red]breaking drift present[/bold red]")
+        return 2
+    return 0
+
+
+def cmd_status(_args):
+    with connect() as conn:
+        rows = query(conn, "SELECT * FROM META.OPEN_DRIFT")
+        contracts = query(
+            conn,
+            "SELECT CONTRACT_KEY, VERSION, REGISTERED_AT FROM META.ACTIVE_CONTRACT "
+            "ORDER BY CONTRACT_KEY",
+        )
+    console.print(f"[bold]{len(contracts)} active contracts[/bold]")
+    for c in contracts:
+        console.print(f"  v{c['VERSION']}  {c['CONTRACT_KEY']}")
+    console.print(f"\n[bold]{len(rows)} open drift events[/bold]")
+    for r in rows:
+        console.print(
+            f"  [{SEV_STYLE[r['SEVERITY']]}]{r['SEVERITY']:<8}[/] "
+            f"{r['DATASET_KEY']}.{r['OBJECT_NAME'] or '*'}  {r['CHANGE_TYPE']}"
+        )
+    return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="fin-aiwh", description="fin_aiwh control plane")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("ping", help="verify the Snowflake connection").set_defaults(fn=cmd_ping)
+
+    a = sub.add_parser("apply", help="run a SQL file from the repo")
+    a.add_argument("path")
+    a.set_defaults(fn=cmd_apply)
+
+    l = sub.add_parser("load", help="load seed CSVs into RAW")
+    l.add_argument("tables", nargs="*", help="limit to these tables")
+    l.set_defaults(fn=cmd_load)
+
+    sub.add_parser("register", help="publish contracts to the control plane").set_defaults(
+        fn=cmd_register
+    )
+
+    d = sub.add_parser("detect", help="compare the warehouse against registered contracts")
+    d.add_argument("--dry-run", action="store_true", help="report only, write nothing")
+    d.add_argument("--fail-on-breaking", action="store_true", help="exit 2 on breaking drift")
+    d.set_defaults(fn=cmd_detect)
+
+    sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)
+
+    args = p.parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
