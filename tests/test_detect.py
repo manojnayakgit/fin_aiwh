@@ -145,3 +145,58 @@ def test_fingerprint_is_stable_and_specific(contract):
     c = diff_dataset(contract, live(contract, INVOICE_ID=obs("INVOICE_ID", length=128)))[0]
     assert a.fingerprint() == b.fingerprint()
     assert a.fingerprint() != c.fingerprint()
+
+
+# --------------------------------------------------------------------------
+# persistence: a divergence already being worked on must not be raised twice
+# --------------------------------------------------------------------------
+
+class FakeConn:
+    """Records what persist() writes, and answers the fingerprint query."""
+    def __init__(self, active_ids):
+        self.active_ids = active_ids
+        self.inserted = []
+
+
+def _wire(monkeypatch, conn):
+    from control import detect as d
+    monkeypatch.setattr(d, "query", lambda c, sql, p=None: [
+        {"EVENT_ID": i} for i in c.active_ids])
+    monkeypatch.setattr(d, "execute", lambda c, sql, p=None: c.inserted.append(p))
+
+
+def _one_finding(contract):
+    from control.detect import diff_dataset
+    cols = {
+        c.name: ObservedColumn(c.name, c.type, c.nullable, i + 1, c.length,
+                               c.precision, c.scale)
+        for i, c in enumerate(contract.columns)
+    }
+    cols["NEW_COL"] = obs("NEW_COL", nullable=True, ordinal=9)
+    return diff_dataset(contract, cols)
+
+
+def test_a_finding_with_no_active_event_is_written(monkeypatch, contract):
+    from control.detect import persist
+    conn = FakeConn(active_ids=[])
+    _wire(monkeypatch, conn)
+    written, suppressed = persist(conn, "run1", _one_finding(contract), [contract])
+    assert (written, suppressed) == (1, 0)
+    assert conn.inserted[0]["change_type"] == "COLUMN_ADDED"
+
+
+def test_a_finding_already_escalated_is_not_raised_again(monkeypatch, contract):
+    """Regression: an issue is already open for this, do not open another."""
+    from control.detect import persist
+    findings = _one_finding(contract)
+    conn = FakeConn(active_ids=[findings[0].fingerprint()])
+    _wire(monkeypatch, conn)
+    written, suppressed = persist(conn, "run2", findings, [contract])
+    assert (written, suppressed) == (0, 1)
+    assert conn.inserted == []
+
+
+def test_active_statuses_cover_every_live_workflow_state():
+    from control.detect import ACTIVE_STATUSES
+    assert set(ACTIVE_STATUSES) == {"OPEN", "PROPOSED", "ESCALATED"}
+    assert "DISMISSED" not in ACTIVE_STATUSES and "MERGED" not in ACTIVE_STATUSES

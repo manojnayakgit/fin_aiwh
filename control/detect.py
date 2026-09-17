@@ -280,22 +280,36 @@ def diff_all(
 # persistence
 # --------------------------------------------------------------------------
 
-def open_fingerprints(conn) -> set[str]:
+# A divergence already being worked on must not be raised again. OPEN is waiting
+# for triage, PROPOSED has a pull request, ESCALATED has an issue. All three are
+# live workflow items. DISMISSED and MERGED are finished, so if the same
+# divergence turns up afterwards it is genuinely new and deserves a new event.
+ACTIVE_STATUSES = ("OPEN", "PROPOSED", "ESCALATED")
+
+
+def active_fingerprints(conn) -> set[str]:
     rows = query(
         conn,
-        "SELECT EVENT_ID FROM META.DRIFT_EVENT WHERE STATUS = 'OPEN'",
+        "SELECT EVENT_ID FROM FIN_AIWH.META.DRIFT_EVENT WHERE STATUS IN (%s)"
+        % ",".join(f"'{s}'" for s in ACTIVE_STATUSES),
     )
     return {r["EVENT_ID"] for r in rows}
 
 
-def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract]) -> int:
-    """Write new findings. Re-detecting the same divergence does not duplicate it."""
+def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract]) -> tuple[int, int]:
+    """Write new findings. Re-detecting the same divergence does not duplicate it.
+
+    Returns (written, suppressed) so a run can say how much it deliberately
+    stayed quiet about.
+    """
     versions = {c.dataset: c.version for c in contracts}
-    already = open_fingerprints(conn)
+    already = active_fingerprints(conn)
+    suppressed = 0
     written = 0
     for f in findings:
         fp = f.fingerprint()
         if fp in already:
+            suppressed += 1
             continue
         execute(
             conn,
@@ -322,7 +336,7 @@ def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract
             },
         )
         written += 1
-    return written
+    return written, suppressed
 
 
 def snapshot_observed(conn, run_id: str, observed: dict[str, dict[str, ObservedColumn]]) -> int:

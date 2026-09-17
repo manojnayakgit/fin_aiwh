@@ -654,6 +654,57 @@ judging against the old version. A scheduled detector should register first.
 
 ---
 
+## Step 23. The loop closed, and the duplicate it exposed
+
+**The full cycle worked.** After merging the agent's PR and running
+`register` then `detect`, `RAW.AP_INVOICE` disappeared from the drift list
+entirely. Upstream changed it, the detector classified the change, the agent
+proposed a contract, a human merged it, registration made it the agreement of
+record, and the warehouse now matches. That is the whole thesis in one run.
+
+```bash
+python -m control.cli register    # the merged contract becomes v2 of record
+python -m control.cli detect      # AP_INVOICE no longer diverges
+```
+
+**Registration is not automatic, and should not be.** A contract file changing
+on disk means nothing until it is registered. Merge a contract PR, then run
+`register`, or the detector keeps judging against the old version. A scheduled
+detector registers first.
+
+### The duplicate
+
+That run reported `new 4`. Two of those were already escalated to issues #3
+and #4, and one already had PR #1 open. They were raised again as fresh
+events, because deduplication only looked at `STATUS = 'OPEN'`.
+
+Left alone, a detector on a schedule would open a duplicate issue every single
+run, for as long as the breaking change existed. The noise would bury the
+signal within a day, which is how alerting systems get muted and then ignored.
+
+**Fix:** deduplicate against every live workflow state.
+
+| Status | Meaning | Re-raise? |
+|---|---|---|
+| `OPEN` | waiting for triage | no |
+| `PROPOSED` | a pull request is open for it | no |
+| `ESCALATED` | an issue is open for it | no |
+| `DISMISSED` | someone decided no action | yes, it is a new occurrence |
+| `MERGED` | the contract was updated | yes, it is a new occurrence |
+
+`detect` now also reports what it stayed quiet about:
+
+```
+run 20260917T212712-893e161a  scanned 9 datasets  found 4 divergences
+  new 1  already being worked on 3
+```
+
+The general rule: anything that runs on a schedule and creates work items
+needs an idempotency key and a definition of "already handled". The
+fingerprint was the key; the missing half was the definition.
+
+---
+
 ## Not yet built
 
 → verify the gate and the agent live (PR opened by the agent, gate green, LOW merged)
