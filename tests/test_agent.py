@@ -134,3 +134,24 @@ def test_prompt_carries_contract_events_and_live_schema(bundle):
     assert "Current contract:" in text
     assert "Current staging model:" in text
     assert "COLUMN_ADDED" in text
+
+
+def test_mark_binds_every_event_id_as_a_parameter():
+    """Regression: the IN list must be driver parameters, not string formatting."""
+    from control import agent
+
+    captured = {}
+
+    def fake_execute(conn, sql, params):
+        captured["sql"], captured["params"] = sql, params
+
+    original = agent.execute
+    agent.execute = fake_execute
+    try:
+        agent.mark(None, ["a1", "b2"], "PROPOSED", "https://x/pr/1")
+    finally:
+        agent.execute = original
+
+    assert "%(e0)s,%(e1)s" in captured["sql"]
+    assert "%s" not in captured["sql"].replace("%(", "")
+    assert captured["params"] == {"st": "PROPOSED", "ref": "https://x/pr/1", "e0": "a1", "e1": "b2"}

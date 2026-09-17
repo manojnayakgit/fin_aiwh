@@ -305,7 +305,7 @@ def main(argv=None):
     r = sub.add_parser("resolve", help="close open drift events")
     r.add_argument("event", nargs="*", help="event ids to close")
     r.add_argument("--all", action="store_true", help="close every OPEN event")
-    r.add_argument("--status", default="DISMISSED", choices=["DISMISSED", "MERGED"])
+    r.add_argument("--status", default="DISMISSED", choices=["DISMISSED", "MERGED", "PROPOSED", "ESCALATED"])
     r.add_argument("--ref", default=None, help="PR url or ticket that resolved it")
     r.set_defaults(fn=cmd_resolve)
 

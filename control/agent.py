@@ -325,6 +325,16 @@ def _ensure_clean_tree():
         raise SystemExit("working tree is not clean; commit or stash before running the agent")
 
 
+def existing_pr(branch: str) -> str | None:
+    """A previous run may have opened the PR and failed afterwards. Reuse it."""
+    out = subprocess.run(
+        ["gh", "pr", "list", "--head", branch, "--state", "open", "--json", "url",
+         "--jq", ".[0].url"],
+        cwd=ROOT, capture_output=True, text=True,
+    ).stdout.strip()
+    return out or None
+
+
 def publish(proposal: Proposal, auto_merge: bool) -> str:
     """Write files, branch, commit, push, open PR. Returns the PR url."""
     assert proposal.ok and proposal.contract
@@ -332,6 +342,9 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
     _ensure_labels()
     base = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
     branch = proposal.branch
+    existing = existing_pr(branch)
+    if existing:
+        return existing
     try:
         _run(["git", "checkout", "-b", branch])
         proposal.contract_path.write_text(proposal.contract_yaml)
@@ -385,9 +398,14 @@ def escalate(bundle: Bundle) -> str:
 
 
 def mark(conn, event_ids: list[str], status: str, ref: str):
+    params = {"st": status, "ref": ref}
+    keys = []
+    for i, e in enumerate(event_ids):
+        params[f"e{i}"] = e
+        keys.append(f"%(e{i})s")
     execute(
         conn,
         "UPDATE FIN_AIWH.META.DRIFT_EVENT SET STATUS = %(st)s, RESOLUTION_REF = %(ref)s "
-        "WHERE EVENT_ID IN (%s)" % ",".join(f"'{e}'" for e in event_ids),
-        {"st": status, "ref": ref},
+        "WHERE EVENT_ID IN (" + ",".join(keys) + ")",
+        params,
     )
