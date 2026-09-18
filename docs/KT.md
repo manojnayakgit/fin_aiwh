@@ -547,6 +547,9 @@ loopback only.
 
 ### Scenarios
 
+Full per-scenario evidence, including what the AI did with each verdict and
+what is deliberately not started, is in `docs/SCENARIOS.md`.
+
 | File | Change | Verdict |
 |---|---|---|
 | `01_additive_column` | Nullable column added | COLUMN_ADDED / LOW |
