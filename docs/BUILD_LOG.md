@@ -874,3 +874,39 @@ ever overwrite the leftovers of an earlier failed run of the same agent.
 
 None of the three is about the model. All three are about the machinery around
 it, which is where the interesting failures keep turning up.
+
+---
+
+## History rewritten to a single author
+
+Commits had accumulated across three identities, plus GitHub as the committer on
+the three PR merges, plus `Co-authored-by` trailers naming both a second personal
+account and the model. GitHub counts each of those as a contributor.
+
+Every commit on `main` and the four live branches was rewritten to one identity.
+`Co-authored-by` and `Claude-Session` trailers were stripped from all of them,
+and the unrewritten local safety branch that still carried them was deleted once
+the bundle backup was verified. The resulting tree is
+byte-identical to the one before the rewrite, verified by `git diff` between the
+old and new tips: only authorship metadata and commit messages changed.
+
+The repo now pins the identity locally, so no future commit here can pick up a
+different global config:
+
+```
+git config user.name  manojnayakgit
+git config user.email 39649907+manojnayakgit@users.noreply.github.com
+```
+
+The `@users.noreply.github.com` form is used on purpose. GitHub attributes a
+commit to an account by email, and that address is derived from the account
+itself, so attribution cannot miss and no personal address is published.
+
+A full pre-rewrite backup is at `.git/backup-preRewrite.bundle`, with the old
+local and remote SHAs recorded beside it. Restoring from it is possible until
+the objects are garbage collected on the remote.
+
+Known consequence: the merged pull requests reference commit SHAs that no longer
+exist on `main`. The PRs and their discussion remain readable, but their commit
+links are orphaned. That is the unavoidable cost of rewriting history, and it is
+worth stating rather than discovering later.
