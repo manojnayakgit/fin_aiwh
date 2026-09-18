@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from control import agent
 from control.agent import Bundle, Proposal, bundle_events, build_prompt, verify
 from control.contracts import load_contracts
 from control.detect import ObservedColumn
@@ -257,3 +258,44 @@ def test_set_status_binds_ids_and_stamps_resolution(monkeypatch):
 
     agent.set_status(None, ["c"], "OPEN")
     assert "RESOLVED_AT" not in captured["sql"], "reopening must not stamp a resolution time"
+
+
+# --------------------------------------------------------------- publish guards
+
+def test_a_failing_command_reports_what_it_said(monkeypatch):
+    """A traceback with no error message in it is not a bug report."""
+    import subprocess as sp
+
+    def boom(*a, **k):
+        raise sp.CalledProcessError(1, ["gh", "pr", "create"], output="could not add label: 'onboard'")
+
+    monkeypatch.setattr(agent.subprocess, "check_output", boom)
+    with pytest.raises(SystemExit) as e:
+        agent._run(["gh", "pr", "create", "--title", "x"])
+    assert "could not add label" in str(e.value)
+    assert "exit 1" in str(e.value)
+
+
+def test_unpushed_local_commits_block_publishing(monkeypatch):
+    """Branching from origin is only safe if origin has your work."""
+    monkeypatch.setattr(agent, "_run", lambda cmd, **k: "3" if "rev-list" in cmd else "")
+    with pytest.raises(SystemExit) as e:
+        agent._ensure_pushed("main")
+    assert "3 commit(s) ahead" in str(e.value)
+    assert "git push" in str(e.value)
+
+
+def test_a_pushed_base_publishes(monkeypatch):
+    monkeypatch.setattr(agent, "_run", lambda cmd, **k: "0" if "rev-list" in cmd else "")
+    agent._ensure_pushed("main")
+
+
+def test_a_branch_left_by_a_failed_run_is_recreated(monkeypatch):
+    """A run that dies after the push must not be blocked by its own wreckage."""
+    calls = []
+    monkeypatch.setattr(agent, "_run", lambda cmd, **k: calls.append(cmd) or "")
+    monkeypatch.setattr(agent.subprocess, "run",
+                        lambda cmd, **k: calls.append(cmd) or type("R", (), {"returncode": 0})())
+    agent._start_branch("onboard/ap_accrual", "main")
+    assert ["git", "branch", "-q", "-D", "onboard/ap_accrual"] in calls
+    assert ["git", "checkout", "-q", "-b", "onboard/ap_accrual", "origin/main"] in calls

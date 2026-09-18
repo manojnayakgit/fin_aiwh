@@ -325,7 +325,36 @@ def verify(proposal: Proposal) -> Proposal:
 # --------------------------------------------------------------------------
 
 def _run(cmd: list[str], **kw) -> str:
-    return subprocess.check_output(cmd, cwd=ROOT, text=True, stderr=subprocess.STDOUT, **kw).strip()
+    """Run a command, and on failure say what it actually said.
+
+    CalledProcessError prints the command and the exit code but not the output,
+    so a failing `gh pr create` used to produce a traceback with no reason in it.
+    """
+    try:
+        return subprocess.check_output(cmd, cwd=ROOT, text=True,
+                                       stderr=subprocess.STDOUT, **kw).strip()
+    except subprocess.CalledProcessError as e:
+        out = (e.output or "").strip()
+        raise SystemExit(f"{' '.join(cmd[:3])} failed (exit {e.returncode}):\n{out}") from None
+
+
+def _start_branch(branch: str, base: str):
+    """Branch from the remote base, discarding any leftover from a failed run.
+
+    Always from origin, never from local HEAD: otherwise an unpushed local commit
+    is swept into the PR. A branch left behind by a run that died after the push
+    is deleted first, so a retry is not blocked by its own wreckage.
+    """
+    _run(["git", "fetch", "-q", "origin", base])
+    subprocess.run(["git", "branch", "-q", "-D", branch], cwd=ROOT,
+                   capture_output=True, text=True)
+    _run(["git", "checkout", "-q", "-b", branch, f"origin/{base}"])
+
+
+def _push(branch: str):
+    # --force-with-lease only ever overwrites a branch from an earlier failed run
+    # of this same agent: if a PR existed, the caller returned before reaching here.
+    _run(["git", "push", "-q", "--force-with-lease", "-u", "origin", branch])
 
 
 LABELS = {
@@ -347,6 +376,25 @@ def _ensure_labels():
 def _ensure_clean_tree():
     if _run(["git", "status", "--porcelain"]):
         raise SystemExit("working tree is not clean; commit or stash before running the agent")
+
+
+def _ensure_pushed(base: str):
+    """Refuse to open a PR against a base that is missing your local commits.
+
+    The agent branches from origin/<base> so unpushed local work is never swept
+    into a PR. The other half of that rule: if local <base> is ahead of the
+    remote, every file you have changed locally but not pushed shows up in the
+    PR diff as a deletion or a revert. The PR is not wrong, it is just built on
+    a base nobody else can see yet.
+    """
+    _run(["git", "fetch", "-q", "origin", base])
+    ahead = _run(["git", "rev-list", "--count", f"origin/{base}..{base}"])
+    if ahead != "0":
+        raise SystemExit(
+            f"local '{base}' is {ahead} commit(s) ahead of origin/{base}. The agent "
+            f"branches from origin, so the PR would read as reverting them.\n"
+            f"Run: git push"
+        )
 
 
 def required_checks(base: str) -> list[str]:
@@ -384,6 +432,7 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
     _ensure_clean_tree()
     _ensure_labels()
     base = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    _ensure_pushed(base)
     branch = proposal.branch
     existing = existing_pr(branch)
     if existing:
@@ -392,9 +441,8 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
     # Branch from the remote base, never from local HEAD. Otherwise any local
     # commit not yet pushed is swept into the PR, and a contract change arrives
     # carrying unrelated work.
-    _run(["git", "fetch", "-q", "origin", base])
     try:
-        _run(["git", "checkout", "-q", "-b", branch, f"origin/{base}"])
+        _start_branch(branch, base)
         proposal.contract_path.write_text(proposal.contract_yaml)
         files = [str(proposal.contract_path.relative_to(ROOT))]
         if proposal.staging_sql is not None:
@@ -412,7 +460,7 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
             f"Drift events: {', '.join(proposal.bundle.event_ids)}\n"
         )
         _run(["git", "commit", "-q", "-m", proposal.pr_title, "-m", body])
-        _run(["git", "push", "-q", "-u", "origin", branch])
+        _push(branch)
         labels = ["drift", proposal.bundle.worst.lower()]
         url = _run([
             "gh", "pr", "create", "--title", proposal.pr_title, "--body", body,
@@ -580,12 +628,12 @@ def publish_shield(sh, issue_url: str | None, impact_md: str | None, base: str |
                     "--description", "restores contracted shape over breaking drift", "--force"],
                    cwd=ROOT, capture_output=True, text=True)
     base = base or _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    _ensure_pushed(base)
     existing = existing_pr(sh.branch)
     if existing:
         return existing
-    _run(["git", "fetch", "-q", "origin", base])
     try:
-        _run(["git", "checkout", "-q", "-b", sh.branch, f"origin/{base}"])
+        _start_branch(sh.branch, base)
         sh.staging_path.write_text(sh.staging_after)
         files = [str(sh.staging_path.relative_to(ROOT))]
         for path, sql in sh.test_files().items():
@@ -594,7 +642,7 @@ def publish_shield(sh, issue_url: str | None, impact_md: str | None, base: str |
         _run(["git", "add", *files])
         body = pr_body(sh, issue_url, impact_md)
         _run(["git", "commit", "-q", "-m", pr_title(sh), "-m", body])
-        _run(["git", "push", "-q", "-u", "origin", sh.branch])
+        _push(sh.branch)
         url = _run([
             "gh", "pr", "create", "--title", pr_title(sh), "--body", body,
             "--base", base, "--head", sh.branch,
@@ -713,12 +761,12 @@ def publish_onboarding(proposal: Proposal, ob, impact_md: str | None,
                     "--description", "brings an ungoverned table under contract", "--force"],
                    cwd=ROOT, capture_output=True, text=True)
     base = base or _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    _ensure_pushed(base)
     existing = existing_pr(ob.branch)
     if existing:
         return existing
-    _run(["git", "fetch", "-q", "origin", base])
     try:
-        _run(["git", "checkout", "-q", "-b", ob.branch, f"origin/{base}"])
+        _start_branch(ob.branch, base)
         proposal.contract_path.write_text(proposal.contract_yaml)
         ob.staging_path.write_text(ob.staging_sql)
         SOURCES.write_text(ob.sources_after)
@@ -731,7 +779,7 @@ def publish_onboarding(proposal: Proposal, ob, impact_md: str | None,
                 f"Agent reasoning: {proposal.reasoning}\n\n"
                 f"Drift events: {', '.join(proposal.bundle.event_ids)}\n")
         _run(["git", "commit", "-q", "-m", title, "-m", body])
-        _run(["git", "push", "-q", "-u", "origin", ob.branch])
+        _push(ob.branch)
         return _run([
             "gh", "pr", "create", "--title", title, "--body", body,
             "--base", base, "--head", ob.branch,

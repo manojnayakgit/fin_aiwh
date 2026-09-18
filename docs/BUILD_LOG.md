@@ -840,3 +840,37 @@ because source names resolve case-sensitively against `sources.yml`. The second
 one is not a judgement call, so it is now rewritten to the canonical spelling
 rather than bounced back. Rejections also print the SQL now: a verifier that
 says no without showing what it read is hard to trust.
+
+
+---
+
+## The first live onboarding PR failed, and the failure was worth more than the PR
+
+`gh pr create` exited 1. The traceback was forty lines of subprocess internals
+and did not contain a single word of what `gh` had said, because `_run` used
+`check_output` and `CalledProcessError` prints the command and the exit code but
+not the output. That is fixed first: a publish failure now reports what the
+command actually said.
+
+The branch itself then told a stranger story. `git diff origin/main..onboard/ap_accrual`
+showed the PR deleting `docs/SCENARIOS.md` and reverting `control/onboard.py`.
+
+The branch was built on `975860d`. `origin/main` was at `dc7b76f`, three commits
+later. Those three commits existed only on the local machine when the agent ran.
+
+The agent branches from `origin/base` on purpose: it is what stopped an earlier
+PR from sweeping four unpushed commits into a contract change. That rule was
+right and is unchanged. What was missing is its other half. If local `base` is
+ahead of the remote, every local-only change shows up in the PR diff as a
+deletion, because the base genuinely does not have it. The agent already refused
+to run against a dirty tree. It now also refuses to publish against a base that
+has not been pushed, and says how many commits are missing.
+
+The third fix is smaller. The run died after `git push`, leaving the branch
+behind, so a retry failed on `git checkout -b`. Branches are now deleted and
+recreated from `origin/base`, and pushed with `--force-with-lease`. A PR that
+already exists still short-circuits before any of this, so the force can only
+ever overwrite the leftovers of an earlier failed run of the same agent.
+
+None of the three is about the model. All three are about the machinery around
+it, which is where the interesting failures keep turning up.

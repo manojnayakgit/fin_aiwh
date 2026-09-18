@@ -184,7 +184,7 @@ event can still be read against the March contract.
 | Route | BREAKING → issue, events `ESCALATED`, then a **shield PR** (4.5). No contract at all → **onboarding PR** (4.9). Otherwise LOW or MEDIUM → draft, verify, PR, events `PROPOSED` |
 | Draft | Claude receives: events as JSON, live schema as JSON, current contract, current staging model, downstream impact. Replies through a **forced tool call** with a fixed schema: `contract_yaml`, `staging_sql`, `pr_title`, `pr_body`, `reasoning`. Structured data, nothing to parse |
 | Verify | Reject if: YAML fails to parse, dataset renamed, version ≠ old+1, any contracted column dropped, primary key changed, **proposal still diverges from live schema**, staging no longer reads `source('raw', ...)` |
-| Publish | Fetch, branch from `origin/main` (never local HEAD), write contract and optional staging model, commit, push, `gh pr create` with `drift` + severity labels |
+| Publish | Refuse if the tree is dirty **or local base is ahead of origin**, branch from `origin/main` (never local HEAD), write files, commit, push, `gh pr create` with `drift` + severity labels |
 | Auto merge | Only if branch protection reports required status checks. Otherwise the agent says why it did not |
 | Mark | Events → `PROPOSED` or `ESCALATED`, URL stored in `RESOLUTION_REF` |
 
@@ -609,7 +609,7 @@ python -m pytest tests -q
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Ungoverned table → contract, source entry, staging model and tests in one PR, column set verified |
-| Console, sync, scheduled cycle, 95 tests | Done |
+| Console, sync, scheduled cycle, 106 tests | Done |
 
 ### Not done
 
@@ -635,7 +635,7 @@ python -m pytest tests -q
 | Priority | Item | Why |
 |---|---|---|
 | 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
-| 4 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
+| 2 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
 | 3 | Staged contract change after a shield | v+1 marks the column deprecated, v+2 removes it, so a shield is retired on a schedule instead of by hand |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
@@ -647,6 +647,13 @@ contained. Verification does not trust the draft either way.
 ---
 
 ## 12. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `local 'main' is N commit(s) ahead of origin/main` | The agent branches from `origin/main`, so unpushed local commits would show in the PR diff as deletions | `git push`, then rerun |
+| A publish died and the branch already exists | A run that failed after the push left the branch behind | Nothing. The next run deletes it and recreates from `origin/base` |
+| `gh pr create` fails with no visible reason | Older `_run` hid the subprocess output | Fixed. Failures now print what the command said |
+
 
 | Symptom | Fix |
 |---|---|

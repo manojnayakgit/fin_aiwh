@@ -285,8 +285,9 @@ table belonged. That last part is the designed boundary: where a new dataset
 sits in the reporting layer has accounting consequences, so the PR says what the
 agent thinks and stops.
 
-**Status.** Code complete, 27 tests, dry run clean. The live PR has not been
-opened yet.
+**Status.** Code complete, 27 tests, dry run clean. The first live publish
+attempt failed and exposed two defects in the publish path, both now fixed and
+described in section 4. The PR has not been opened yet.
 
 ---
 
@@ -319,6 +320,22 @@ Comments are stripped first now.
 → An early verifier looked for the literal string `source('raw', 'AP_ACCRUAL')`,
 so a model that omitted the space was rejected for reading the wrong table. True
 about the string, false about the SQL.
+
+→ `_run()` raised `CalledProcessError`, which prints the command and the exit
+code but not the output. A failing `gh pr create` produced a 40-line traceback
+that did not contain the reason. Failures now carry what the command said.
+
+→ The agent refused a dirty working tree but not an unpushed one. Branching from
+`origin/base` is right, and is what keeps unpushed local work out of a PR. The
+missing half: when local `main` was three commits ahead of origin, the onboarding
+branch was built on a base that lacked them, and the PR diff read as deleting
+`docs/SCENARIOS.md` and reverting `control/onboard.py`. The agent now refuses to
+publish until the base is pushed.
+
+→ A publish that died after `git push` left its branch behind, so the retry
+failed on `git checkout -b`. Branches are now recreated from `origin/base` and
+force-pushed with a lease, which only ever overwrites the wreckage of an earlier
+run of the same agent.
 
 ---
 
@@ -355,13 +372,13 @@ the source is fixed, and hides nothing from the control plane.
 
 ## 7. Test inventory
 
-102 tests, no Snowflake connection required, ~2s.
+106 tests, no Snowflake connection required, ~2s.
 
 | File | Tests | Covers |
 |---|---|---|
 | `tests/test_detect.py` | 20 | every classification rule, fingerprint stability, dedupe against live statuses |
 | `tests/test_onboard.py` | 27 | source entry, test generation, SQL column parsing, every `verify()` rejection |
-| `tests/test_agent.py` | 22 | proposal verification, bundling, branch protection probe, GitHub outcome reconciliation |
+| `tests/test_agent.py` | 26 | proposal verification, bundling, branch protection probe, GitHub outcome reconciliation, publish guards |
 | `tests/test_lineage.py` | 13 | model and column lineage from the dbt manifest, confidence levels |
 | `tests/test_shield.py` | 9 | shield planning, refusal to guess, staleness detection |
 | `tests/test_ui.py` | 6 | console action allowlist |
