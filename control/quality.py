@@ -62,6 +62,7 @@ DMF_BY_TYPE = {"BOOLEAN": f"{DMF_SCHEMA}.NULL_COUNT_BOOL"}
 # into one text value first, with a separator no code column will contain.
 COMPOSITE_DUP_DMF = f"{DMF_SCHEMA}.DUPLICATE_COUNT_KEY"
 KEY_SEP = "\\u001f"
+KEY_WIDTH = 4000
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,8 @@ class Check:
     def sql(self) -> str:
         if self.change_type == "DUPLICATE_KEY" and len(self.columns) > 1:
             parts = ", ".join(f"{c}::VARCHAR" for c in self.columns)
-            cols = f"CONCAT_WS('{KEY_SEP}', {parts})"
+            # bound to the width the DMF declares; an unbounded expression is refused
+            cols = f"CONCAT_WS('{KEY_SEP}', {parts})::VARCHAR({KEY_WIDTH})"
         else:
             cols = ", ".join(self.columns) if self.columns else "*"
         call = f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"

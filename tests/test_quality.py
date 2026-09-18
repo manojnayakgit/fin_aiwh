@@ -42,6 +42,7 @@ def test_a_composite_key_is_one_check_folded_into_one_value():
     assert dup.columns == ("INVOICE_ID", "LOADED_AT")
     assert dup.dmf == "FIN_AIWH.META.DUPLICATE_COUNT_KEY"
     assert "CONCAT_WS(" in dup.sql() and "INVOICE_ID::VARCHAR, LOADED_AT::VARCHAR" in dup.sql()
+    assert ")::VARCHAR(4000)" in dup.sql()
     assert not dup.attachable
 
 
