@@ -56,9 +56,13 @@ def test_page_renders(server):
 
 
 def test_every_scenario_is_offered(server):
+    """Every script in ops/scenarios is a button. No hard count: adding a
+    scenario is routine and must not need a test edit."""
+    from control.config import ROOT
+    on_disk = {p.stem for p in (ROOT / "ops" / "scenarios").glob("*.sql")}
     meta = json.loads(get("/api/meta"))
-    assert len(meta["scenarios"]) == 8
-    assert {s["key"] for s in meta["scenarios"]} >= {"04_money_scale_changed", "99_reset"}
+    assert {s["key"] for s in meta["scenarios"]} == on_disk
+    assert {"04_money_scale_changed", "08_upstream_fixed", "99_reset"} <= on_disk
     assert all(s["title"] for s in meta["scenarios"]), "a scenario has no description"
 
 

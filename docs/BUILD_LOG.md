@@ -958,3 +958,40 @@ thought the table belonged, which is the boundary the design draws on purpose.
 Seven scenarios, all fired live, all now resolved or shielded. The remaining work
 is not detection or drafting. It is the retirement path for shields, and the
 branch protection that would let the LOW path merge without a human click.
+
+
+---
+
+## Taking a shield back out
+
+The two open issues were correct. The shields were doing their job. The gap was
+that nothing had ever taken one out, and "a human edits the SQL" is not an
+answer that survives a second breakage.
+
+Retirement is the inverse of applying a shield, and it is held to the same
+standard. The restored line is derived from the shield's own text: `null::T as
+col` goes back to `col`, `cast(expr as T) as col` goes back to `expr as col`, a
+pass-through shield loses its header comment and its guard test. Anything that
+does not match a shape the shield code wrote is refused with the offending line
+printed. Guessing at SQL in a finance mart is the one thing this system never
+does, in either direction.
+
+Two decisions worth recording.
+
+Staleness is judged against the live schema, never the event table. An
+escalated event can outlive the divergence it recorded, and the shield's own
+column is the only thing that knows whether it is still needed.
+
+No new lifecycle state was added. The retirement PR says `Closes <issue>`.
+GitHub closes the issue on merge, `sync` sees the closed issue and dismisses
+the event, exactly as it already did. The closing half of the BREAKING path
+reuses every piece of the opening half.
+
+Scenario 08 repairs both breakages at source and touches nothing else. The
+console test that counted scenarios broke on it, the same way the contract test
+had broken on the ninth contract. Both now derive their expectation from the
+directory. That is two tests in one day that failed because the product
+succeeded, which is a pattern to stop writing.
+
+DMFs are in scope for content governance. A probe is written; the edition of
+the account decides the design.

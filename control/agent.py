@@ -787,3 +787,53 @@ def publish_onboarding(proposal: Proposal, ob, impact_md: str | None,
         ]).splitlines()[-1]
     finally:
         _run(["git", "checkout", "-q", base])
+
+
+# --------------------------------------------------------------------------
+# retiring a shield
+#
+# A shield is temporary by definition. When the live schema matches the contract
+# again, the shield is serving a substitute value where the real one is now
+# available. This opens the PR that takes it out. The PR body carries
+# "Closes <issue>", so merging it closes the tracking issue, and the next sync
+# moves the escalated event to DISMISSED through the existing lifecycle. No new
+# state was added for this.
+# --------------------------------------------------------------------------
+
+def publish_retirement(r, base: str | None = None) -> str:
+    from .shield import retire_body, retire_title
+    assert r.ok
+    _ensure_clean_tree()
+    _ensure_labels()
+    subprocess.run(["gh", "label", "create", "retire", "--color", "BFD4F2",
+                    "--description", "removes a shield whose drift is repaired", "--force"],
+                   cwd=ROOT, capture_output=True, text=True)
+    base = base or _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    _ensure_pushed(base)
+    existing = existing_pr(r.branch)
+    if existing:
+        return existing
+    try:
+        _start_branch(r.branch, base)
+        r.staging_path.write_text(r.staging_after)
+        _run(["git", "add", str(r.staging_path.relative_to(ROOT))])
+        for t in r.drop_tests:
+            _run(["git", "rm", "-q", str(t.relative_to(ROOT))])
+        title, body = retire_title(r), retire_body(r)
+        _run(["git", "commit", "-q", "-m", title, "-m", body])
+        _push(r.branch)
+        url = _run([
+            "gh", "pr", "create", "--title", title, "--body", body,
+            "--base", base, "--head", r.branch,
+            "--label", "drift", "--label", "retire",
+        ]).splitlines()[-1]
+        for issue in r.issues:
+            subprocess.run(
+                ["gh", "issue", "comment", issue, "--body",
+                 f"Upstream is repaired and the detector no longer raises this. "
+                 f"Retirement proposed: {url}. Merging it closes this issue."],
+                cwd=ROOT, capture_output=True, text=True,
+            )
+        return url
+    finally:
+        _run(["git", "checkout", "-q", base])

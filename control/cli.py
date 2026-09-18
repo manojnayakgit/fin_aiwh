@@ -18,7 +18,8 @@ from .detect import (
 )
 from .agent import (BREAKING as _B, breaking_events, bundle_events, draft, draft_staging,
                     escalate, github_outcome, mark, open_events, pending_events, publish,
-                    publish_onboarding, publish_shield, set_status, verify)
+                    publish_onboarding, publish_retirement, publish_shield, set_status,
+                    verify)
 from .lineage import Lineage
 from .load import load_all
 from .register import register
@@ -290,6 +291,42 @@ def _onboard(b, p, dry_run: bool):
     return publish_onboarding(p, ob, di.markdown() if di and not di.empty else None)
 
 
+def _retire_stale(contracts, observed, dataset: str | None, dry_run: bool) -> int:
+    """Open a retirement PR for every shield whose drift is gone.
+
+    Judged against the live schema, not the event table. An escalated event can
+    outlive the divergence it recorded; the shield's own column is the truth.
+    """
+    findings = diff_all(contracts, observed)
+    active = {(f.dataset_key.split(".")[-1], (f.object_name or "").upper()) for f in findings}
+    by_table: dict[str, set[str]] = {}
+    for table, col, _ in shield_mod.stale(active):
+        if dataset and f"RAW.{table}" != dataset.upper():
+            continue
+        by_table.setdefault(table, set()).add(col)
+    if not by_table:
+        return 0
+    rc = 0
+    for table, cols in sorted(by_table.items()):
+        r = shield_mod.plan_retirement(table, cols)
+        console.print(f"[bold]RAW.{table}[/bold]  shield stale  {', '.join(sorted(cols))}")
+        if not r.ok:
+            rc = 1
+            console.print("  [yellow]retirement refused:[/yellow] " + "; ".join(r.errors))
+            continue
+        if dry_run:
+            console.print("  → would open a retirement PR and close " + ", ".join(r.issues))
+            console.print("  [dim]dry run, printing restored model:[/dim]")
+            console.print(r.staging_after)
+            continue
+        url = publish_retirement(r)
+        console.print(f"  [cyan]retirement PR[/cyan] {url}")
+        if r.drop_tests:
+            console.print(f"  [dim]removes {', '.join(p.name for p in r.drop_tests)}[/dim]")
+        console.print("")
+    return rc
+
+
 def cmd_agent(args):
     s = load_settings()
     contracts = load_contracts()
@@ -299,9 +336,14 @@ def cmd_agent(args):
     bundles = bundle_events(events, contracts, observed, Lineage.load())
     if args.dataset:
         bundles = [b for b in bundles if b.dataset_key == args.dataset.upper()]
+
+    # Shields whose drift has been repaired come out first. This does not depend
+    # on any open event, so it runs even when there is nothing else to do.
+    retired_rc = _retire_stale(contracts, observed, args.dataset, args.dry_run)
+
     if not bundles and args.dry_run:
         console.print("[green]no open drift, nothing to do[/green]")
-        return 0
+        return retired_rc
     if bundles:
         console.print(f"{len(events)} open event(s) across {len(bundles)} dataset(s)\n")
     rc = 0
@@ -313,7 +355,7 @@ def cmd_agent(args):
             prior = [e for e in breaking_events(conn) if e["STATUS"] == "ESCALATED"]
         if not bundles and not prior:
             console.print("[green]no open drift, nothing to do[/green]")
-            return 0
+            return retired_rc
         open_keys = {b.dataset_key for b in bundles}
         for pb in bundle_events(prior, contracts, observed, Lineage.load()):
             if pb.dataset_key in open_keys:
@@ -385,7 +427,7 @@ def cmd_agent(args):
         style = "yellow" if "NOT enabled" in p.merge_note else "dim"
         console.print(f"  [green]PR[/green] {url}")
         console.print(f"  [{style}]{p.merge_note}[/]\n")
-    return rc
+    return rc or retired_rc
 
 
 def cmd_sync(args):

@@ -264,3 +264,144 @@ def pr_body(sh: Shield, issue_url: str | None, impact_md: str | None) -> str:
     if issue_url:
         lines += ["", f"Tracking issue: {issue_url}"]
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# retirement: upstream was repaired, the shield has to come back out
+#
+# The inverse of apply(), and held to the same standard. A shield that is
+# removed wrongly silently changes what a finance report says, so every
+# restoration is derived from the shield's own line and anything that does not
+# match the shape apply() wrote is refused rather than guessed at.
+# --------------------------------------------------------------------------
+
+_NULL_SHIELD = re.compile(
+    r"^(?P<indent>\s*)null::[\w(),\s]+\s+as\s+(?P<col>\w+)(?P<comma>,?)\s*" + re.escape(MARK),
+    re.IGNORECASE)
+_CAST_SHIELD = re.compile(
+    r"^(?P<indent>\s*)cast\(\s*(?P<expr>.+?)\s+as\s+[\w(),\s]+\)\s+as\s+(?P<col>\w+)(?P<comma>,?)\s*"
+    + re.escape(MARK), re.IGNORECASE)
+
+_ISSUE = re.compile(r"see (https://\S+)")
+
+
+@dataclass
+class Retirement:
+    table: str
+    columns: list[str] = field(default_factory=list)
+    staging_before: str = ""
+    staging_after: str = ""
+    drop_tests: list[Path] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.columns or self.drop_tests) and not self.errors
+
+    @property
+    def staging_path(self) -> Path:
+        return STAGING / f"stg_{self.table.lower()}.sql"
+
+    @property
+    def branch(self) -> str:
+        return f"retire/{self.table.lower()}"
+
+
+def retire_line(line: str) -> str | None:
+    """A shielded select line restored to what it was. None if the shape is unknown."""
+    m = _NULL_SHIELD.match(line)
+    if m:
+        return f"{m.group('indent')}{m.group('col').lower()}{m.group('comma')}"
+    m = _CAST_SHIELD.match(line)
+    if m:
+        expr, col = m.group("expr").strip(), m.group("col")
+        body = col.lower() if expr.lower() == col.lower() else f"{expr} as {col.lower()}"
+        return f"{m.group('indent')}{body}{m.group('comma')}"
+    return None
+
+
+def plan_retirement(table: str, columns: set[str]) -> Retirement:
+    """Remove the shields for these columns from one staging model."""
+    r = Retirement(table=table)
+    path = r.staging_path
+    if not path.exists():
+        r.errors.append(f"no staging model at {path.name}")
+        return r
+
+    sql = path.read_text()
+    r.staging_before = sql
+    out, wanted = [], {c.upper() for c in columns}
+    seen = set()
+
+    for line in sql.splitlines():
+        if MARK not in line:
+            out.append(line)
+            continue
+        note = line[line.index(MARK) + len(MARK):].strip()
+        col = note.split(" ", 1)[0].upper()
+        if col not in wanted:
+            out.append(line)
+            continue
+        seen.add(col)
+        found = _ISSUE.search(note)
+        if found and found.group(1) not in r.issues:
+            r.issues.append(found.group(1))
+
+        if line.strip().startswith(MARK):
+            # a pass-through shield: the note is the whole line, and its guard
+            # is a singular test file that goes with it
+            t = TESTS / f"shield_{table.lower()}_{col.lower()}_not_null.sql"
+            if t.exists():
+                r.drop_tests.append(t)
+            r.columns.append(col)
+            continue
+
+        restored = retire_line(line)
+        if restored is None:
+            r.errors.append(
+                f"{col}: shield line does not match a shape this can safely undo, "
+                f"refusing to guess: {line.strip()}")
+            out.append(line)
+            continue
+        out.append(restored)
+        r.columns.append(col)
+
+    for missing in sorted(wanted - seen):
+        r.errors.append(f"{missing}: no shield marker found in {path.name}")
+
+    text = "\n".join(out)
+    # a pass-through shield leaves its blank separator line behind
+    while text.startswith("\n"):
+        text = text[1:]
+    r.staging_after = text + ("\n" if sql.endswith("\n") else "")
+    if "source('raw'" not in r.staging_after:
+        r.errors.append("staging model no longer reads from source('raw', ...)")
+    return r
+
+
+def retire_title(r: Retirement) -> str:
+    return f"Retire the {r.table} shield: upstream is repaired"
+
+
+def retire_body(r: Retirement) -> str:
+    lines = [
+        f"`RAW.{r.table}` matches its contract again, so the shield in "
+        f"`stg_{r.table.lower()}` has nothing left to do. Leaving it would keep "
+        f"serving the shield's value instead of the real one.",
+        "",
+        "| column | shield removed | now reads |",
+        "|---|---|---|",
+    ]
+    for c in r.columns:
+        lines.append(f"| `{c}` | yes | the live column |")
+    if r.drop_tests:
+        lines += ["", "**Guard tests removed**", *[f"- `{p.name}`" for p in r.drop_tests]]
+    lines += [
+        "",
+        "The detector confirmed the drift is gone before this was opened. If it "
+        "reappears, the next cycle raises it again and proposes a fresh shield.",
+    ]
+    for url in r.issues:
+        lines += ["", f"Closes {url}"]
+    return "\n".join(lines)

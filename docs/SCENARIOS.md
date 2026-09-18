@@ -32,12 +32,14 @@ artifact that proves it happened.
 | 05 | Column dropped | `AP_PAYMENT.BANK_REF` removed | `COLUMN_REMOVED` / BREAKING | **Passed** | issue #3, shield PR #5, merged `72485a8` |
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
 | 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** | PR #1 closed, **PR #7 merged** `99760b0` |
+| 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Built, not merged** | retirement PRs pending live run |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
 
-7 scenario scripts, all re-runnable, all fired live, all seven now resolved or
-shielded end to end. 3 further rules covered by unit test with no live script.
+8 scenario scripts, all re-runnable. Seven fired live and resolved or shielded
+end to end. The eighth, the repair, is built and verified locally and awaits its
+live run. 3 further rules covered by unit test with no live script.
 
 ---
 
@@ -143,6 +145,35 @@ a break.
 `AP_INVOICE`. One PR, both adopted: *"Adopt APPROVER_ID and widen
 INVOICE_NUMBER to TEXT(128)"*. Bundling by dataset is the reason a reviewer sees
 one coherent change instead of two competing branches on the same contract.
+
+---
+
+### 08 — Upstream repaired · **Built, not merged**
+
+**Change.** The source team puts `BANK_REF` back on `AP_PAYMENT` and restores
+NOT NULL on `AR_INVOICE.STATUS`. Nothing else is touched: `AP_ACCRUAL` is now
+contracted and stays, and `REVENUE_STREAM` is a MEDIUM the project should adopt
+rather than push back upstream.
+
+**Why it matters.** Scenarios 05 and 06 prove the system can keep reports
+correct while a source is broken. This proves it can stand down again. A shield
+that outlives its drift serves a substitute value where the real one is now
+available, which is a quiet error of exactly the kind the whole system exists to
+prevent.
+
+**Validated so far.** Ten unit tests on the inverse: a null shield restores the
+bare column, a cast shield restores the original expression, a pass-through
+shield loses its header and its guard test, an unrecognised line is refused, a
+column with no shield is refused, and a neighbouring shield is left alone. Run
+against the two live shielded models in the repo, both round-trip to their exact
+pre-shield SQL, and the planner finds issues #3 and #4 from the markers.
+
+**What the system does.** `agent` checks every installed shield against the
+live schema on every run, before it looks at events. For each stale shield it
+opens a `retire/<table>` PR whose body says `Closes <issue>`, and comments on
+the issue. Merging closes the issue; the next `sync` dismisses the event.
+
+**Not yet done.** Firing it against Snowflake and merging the two PRs.
 
 ---
 
@@ -378,6 +409,7 @@ the source is fixed, and hides nothing from the control plane.
 | **Freshness enforcement** | Not started | Contracts declare a `freshness` block. Nothing reads it. A stale table that still has the right shape passes detection today |
 | **Branch protection on `main`** | Not configured | Until it is, the agent refuses to enable auto-merge, and correctly says why. The LOW path needs one human click that it should not need |
 | **One shield PR for all breaking datasets** | Not started | Two shields opened separately both fail the gate until the first merges, because the build is project-wide |
+| **Content governance (DMFs)** | Not started | Contracts govern shape, nothing governs nulls, duplicates or freshness. Gated on Snowflake edition, probe written |
 | **Live scenario for `DATASET_MISSING`** | Rule only | Dropping a contracted table live is destructive to the demo. The rule is unit tested |
 | **MEDIUM alone on a clean dataset** | Rule only | Every live MEDIUM so far has shared a dataset with a BREAKING event, so bundling routed it to escalation |
 
@@ -385,7 +417,7 @@ the source is fixed, and hides nothing from the control plane.
 
 ## 7. Test inventory
 
-107 tests, no Snowflake connection required, ~2s.
+117 tests, no Snowflake connection required, ~2s.
 
 | File | Tests | Covers |
 |---|---|---|
@@ -393,7 +425,7 @@ the source is fixed, and hides nothing from the control plane.
 | `tests/test_onboard.py` | 27 | source entry, test generation, SQL column parsing, every `verify()` rejection |
 | `tests/test_agent.py` | 26 | proposal verification, bundling, branch protection probe, GitHub outcome reconciliation, publish guards |
 | `tests/test_lineage.py` | 13 | model and column lineage from the dbt manifest, confidence levels |
-| `tests/test_shield.py` | 9 | shield planning, refusal to guess, staleness detection |
+| `tests/test_shield.py` | 19 | shield planning, refusal to guess, staleness, retirement inverse and its refusals |
 | `tests/test_ui.py` | 6 | console action allowlist |
 | `tests/test_contracts.py` | 6 | parsing, unique dataset keys, ownership, canonicalisation, hashing |
 

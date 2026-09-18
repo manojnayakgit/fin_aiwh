@@ -224,8 +224,20 @@ and a wrong one on a finance mart costs more than a model's fluency is worth.
 The gate is the verification: `dbt build -t ci` with mart contracts enforced
 must pass on the shield PR, which is exactly what a correct shield restores.
 
-Removing a shield when upstream is fixed is manual today. Staged contract
-changes with a deprecation window are the next step.
+**Retiring a shield.** A shield is temporary by definition. Every `agent` run
+first checks every installed shield against the live schema, not the event
+table, because an escalated event can outlive the divergence it recorded.
+
+| Step | What |
+|---|---|
+| Find | `shield.installed()` reads every `-- shield:` marker; `stale()` keeps those whose column no longer diverges |
+| Invert | `retire_line()` restores the select line from the shield's own text: `null::T as col` → `col`, `cast(expr as T) as col` → `expr as col`. A pass-through shield loses its header comment and its guard test file |
+| Refuse | any line that does not match a shape `apply()` wrote. The inverse is held to the same bar as the shield: derived, never guessed |
+| Publish | branch `retire/<table>`, label `retire`, body says `Closes <issue>` |
+| Close | merging closes the issue on GitHub; the next `sync` moves the event to `DISMISSED` through the existing lifecycle. No new state was added |
+
+Staged contract changes with a deprecation window remain the alternative for a
+column that is never coming back.
 
 ### 4.6 Sync
 
@@ -559,6 +571,7 @@ what is deliberately not started, is in `docs/SCENARIOS.md`.
 | `05_column_dropped` | Contracted column removed | COLUMN_REMOVED / BREAKING |
 | `06_nullability_relaxed` | NOT NULL dropped | NULLABILITY_RELAXED / BREAKING |
 | `07_new_ungoverned_source` | New table, no contract | DATASET_UNGOVERNED / MEDIUM |
+| `08_upstream_fixed` | 05 and 06 repaired at source | drift gone, both shields reported stale, `agent` proposes retirement |
 | `99_reset` | Rebuild RAW to v1 | then `load`, `resolve --all` |
 
 All verified live. All safe to run twice.
@@ -609,7 +622,8 @@ python -m pytest tests -q
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
-| Console, sync, scheduled cycle, 107 tests | Done |
+| Shield retirement | Built and unit tested. Round-trips both live shielded models to their exact pre-shield SQL. Not yet fired live |
+| Console, sync, scheduled cycle, 117 tests | Done |
 
 ### Not done
 
@@ -637,7 +651,8 @@ python -m pytest tests -q
 | 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
 | 2 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
-| 3 | Staged contract change after a shield | v+1 marks the column deprecated, v+2 removes it, so a shield is retired on a schedule instead of by hand |
+| 3 | Staged contract change after a shield | For a column that is never coming back. Retirement covers the case where upstream repairs it |
+| 3 | Content governance with DMFs | Contracts govern shape only. An `expectations` block plus Snowflake Data Metric Functions would govern nulls, duplicates and freshness through the same severity model. Gated on Enterprise Edition, see `ops/probe_dmf.sql` |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
 **Replacing Claude.** The agent is the only hosted model call, behind one
