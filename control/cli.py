@@ -275,6 +275,8 @@ def _onboard(b, p, dry_run: bool):
         console.print("  [red]staging model rejected by verification:[/red]")
         for e in ob.errors:
             console.print(f"    {e}")
+        console.print("  [dim]rejected model:[/dim]")
+        console.print(ob.staging_sql)
         return None
     console.print(f"  onboarding: contract v{p.contract.version}, source entry, "
                   f"[bold]{ob.model_name}[/bold], "

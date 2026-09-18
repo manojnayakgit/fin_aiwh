@@ -172,7 +172,9 @@ def verify(ob: Onboarding, contract: Contract) -> Onboarding:
     if not sql.strip():
         ob.errors.append("no staging model was produced")
         return ob
-    if f"source('raw', '{ob.table}')" not in sql and f'source("raw", "{ob.table}")' not in sql:
+    src = re.compile(r"source\(\s*['\"]raw['\"]\s*,\s*['\"]" + re.escape(ob.table)
+                     + r"['\"]\s*\)", re.IGNORECASE)
+    if not src.search(sql):
         ob.errors.append(f"staging model does not read from source('raw', '{ob.table}')")
 
     want = {c.name.upper() for c in contract.columns}

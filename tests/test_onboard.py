@@ -174,3 +174,13 @@ def test_every_pass_through_staging_model_still_carries_its_contract():
         assert {x.name.upper() for x in c.columns} <= selected_columns(sql), c.dataset
         checked += 1
     assert checked >= 5
+
+
+@pytest.mark.parametrize("ref", [
+    "{{ source('raw','AP_ACCRUAL') }}",
+    '{{ source("raw", "AP_ACCRUAL") }}',
+    "{{source( 'raw' , 'ap_accrual' )}}",
+])
+def test_source_reference_accepts_any_spacing_and_quotes(ref):
+    sql = GOOD_SQL.replace("{{ source('raw', 'AP_ACCRUAL') }}", ref)
+    assert verify(ob(sql), contract()).ok
