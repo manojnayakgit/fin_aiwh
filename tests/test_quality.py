@@ -34,16 +34,16 @@ def test_primary_key_becomes_a_duplicate_check():
     assert dup[0].max == 0 and dup[0].severity == BREAKING
 
 
-def test_a_composite_key_is_one_check_folded_into_one_value():
-    """The system DUPLICATE_COUNT takes one column, so a composite key is
-    concatenated and counted by a custom DMF. It cannot be attached."""
+def test_a_composite_key_is_measured_by_plain_sql_not_a_dmf():
+    """A DMF argument is a column reference and nothing else, so a key with no
+    single column to name is counted by SQL in the same statement."""
     c = contract(primary_key=["INVOICE_ID", "LOADED_AT"])
     dup = next(x for x in desired(c) if x.change_type == "DUPLICATE_KEY")
     assert dup.columns == ("INVOICE_ID", "LOADED_AT")
-    assert dup.dmf == "FIN_AIWH.META.DUPLICATE_COUNT_KEY"
-    assert "CONCAT_WS(" in dup.sql() and "INVOICE_ID::VARCHAR, LOADED_AT::VARCHAR" in dup.sql()
-    assert ")::VARCHAR(4000)" in dup.sql()
+    assert dup.sql() == ("(SELECT COUNT(*) - COUNT(DISTINCT INVOICE_ID, LOADED_AT) "
+                         "FROM FIN_AIWH.RAW.AP_INVOICE)")
     assert not dup.attachable
+    assert dup.label == "DUPLICATE_COUNT(INVOICE_ID,LOADED_AT)"
 
 
 def test_a_single_column_key_uses_the_system_dmf_and_is_attachable():

@@ -1163,8 +1163,16 @@ cast to NUMBER. Three guesses at a type it would take was two too many. It is
 a custom DMF with `BOOLEAN` declared now, the same pattern as freshness, and
 attachable for the same reason.
 
-**And composite keys.** `SNOWFLAKE.CORE.DUPLICATE_COUNT` takes one column.
-`FX_RATE`'s key is four. Three custom DMFs now sit beside the system ones,
-each for something the system set cannot express: freshness on NTZ, nulls in
-a BOOLEAN, duplicates over a composite key. The pattern has held each time.
-Where Snowflake's function is narrower than the contract, own the function.
+**And composite keys, which taught the actual rule.** `SNOWFLAKE.CORE.DUPLICATE_COUNT`
+takes one column and `FX_RATE`'s key is four. A custom DMF taking the
+concatenated key was refused with the concatenation typed `VARCHAR(134217728)`.
+Bound to `VARCHAR(4000)` on both sides, refused again with the types matching
+exactly. That was the tell. It was never the type. A DMF argument is a column
+reference and nothing else; every cast and every expression across four
+attempts was refused, and every plain column was accepted, including a BOOLEAN
+one through a custom DMF.
+
+So two custom DMFs remain, freshness on NTZ and nulls in a BOOLEAN, both taking
+a bare column. A composite key is counted by plain SQL in the same statement.
+The control plane never cared which function produced the number. Should have
+seen it two attempts earlier.

@@ -58,11 +58,11 @@ QUALITY_TYPES = {"DUPLICATE_KEY", "NULL_IN_REQUIRED", "STALE", "EXPECTATION_BREA
 # which is also attachable. Same pattern as freshness.
 DMF_BY_TYPE = {"BOOLEAN": f"{DMF_SCHEMA}.NULL_COUNT_BOOL"}
 
-# SNOWFLAKE.CORE.DUPLICATE_COUNT takes one column. A composite key is folded
-# into one text value first, with a separator no code column will contain.
-COMPOSITE_DUP_DMF = f"{DMF_SCHEMA}.DUPLICATE_COUNT_KEY"
-KEY_SEP = "\\u001f"
-KEY_WIDTH = 4000
+# A DMF argument is a column reference and nothing else: every expression,
+# cast or concatenation is refused whatever its declared type. So a composite
+# key, which has no single column to name, is not measured by a DMF at all.
+# It is measured by plain SQL in the same statement. Same number, no function.
+PLAIN_SQL = "SQL"
 
 
 @dataclass(frozen=True)
@@ -86,20 +86,19 @@ class Check:
 
     @property
     def attachable(self) -> bool:
-        """ALTER TABLE ... ADD DATA METRIC FUNCTION names columns, not expressions."""
-        return not (self.change_type == "DUPLICATE_KEY" and len(self.columns) > 1)
+        return self.dmf != PLAIN_SQL
 
     @property
     def label(self) -> str:
-        return f"{self.dmf.rsplit('.', 1)[-1]}({self.object_name})"
+        name = "DUPLICATE_COUNT" if self.dmf == PLAIN_SQL else self.dmf.rsplit(".", 1)[-1]
+        return f"{name}({self.object_name})"
 
     def sql(self) -> str:
-        if self.change_type == "DUPLICATE_KEY" and len(self.columns) > 1:
-            parts = ", ".join(f"{c}::VARCHAR" for c in self.columns)
-            # bound to the width the DMF declares; an unbounded expression is refused
-            cols = f"CONCAT_WS('{KEY_SEP}', {parts})::VARCHAR({KEY_WIDTH})"
-        else:
-            cols = ", ".join(self.columns) if self.columns else "*"
+        if self.dmf == PLAIN_SQL:
+            keys = ", ".join(self.columns)
+            return (f"(SELECT COUNT(*) - COUNT(DISTINCT {keys}) "
+                    f"FROM FIN_AIWH.{self.dataset_key})")
+        cols = ", ".join(self.columns) if self.columns else "*"
         call = f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"
         if self.change_type == "STALE":
             # The DMF returns the newest load as epoch seconds (a DMF body may
@@ -130,7 +129,7 @@ def desired(contract: Contract) -> list[Check]:
     if contract.primary_key:
         out.append(Check(
             dataset_key=key, change_type="DUPLICATE_KEY",
-            dmf=COMPOSITE_DUP_DMF if len(contract.primary_key) > 1 else "SNOWFLAKE.CORE.DUPLICATE_COUNT",
+            dmf=PLAIN_SQL if len(contract.primary_key) > 1 else "SNOWFLAKE.CORE.DUPLICATE_COUNT",
             columns=tuple(contract.primary_key), min=None, max=0, severity=BREAKING,
             why=f"primary_key is {contract.primary_key}; a duplicate makes every join fan out",
         ))
