@@ -4,10 +4,15 @@
 -- freshness check needs a custom DMF because SNOWFLAKE.CORE.FRESHNESS refuses
 -- TIMESTAMP_NTZ, which is every LOADED_AT in RAW.
 
--- 1. Let the engineering role call and attach DMFs.
+-- 1. Let the engineering role attach DMFs to tables it owns. Calling a
+--    system DMF directly needs no grant: every role has USAGE on them.
 GRANT EXECUTE DATA METRIC FUNCTION ON ACCOUNT TO ROLE FIN_AIWH_ENG;
 GRANT DATABASE ROLE SNOWFLAKE.DATA_METRIC_USER TO ROLE FIN_AIWH_ENG;
-GRANT DATABASE ROLE SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER TO ROLE FIN_AIWH_ENG;
+
+-- 1b. Optional. Only needed to read Snowflake's own history view,
+--     SNOWFLAKE.LOCAL.DATA_QUALITY_MONITORING_RESULTS, which the CLI does not
+--     use: detect measures synchronously. This is an APPLICATION role.
+GRANT APPLICATION ROLE SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER TO ROLE FIN_AIWH_ENG;
 
 -- 2. Freshness in hours, on the timestamp type RAW actually uses.
 --    Returns how far behind now the newest row is. The contract's
