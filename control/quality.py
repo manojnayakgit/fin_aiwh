@@ -30,9 +30,11 @@ Two ways the DMFs are used, and the split matters:
                for people who never run this CLI. `quality attach` reconciles
                the attachments to the contracts; nothing else depends on them.
 
-FRESHNESS is a custom DMF (ops/20_quality.sql) because the system one refuses
-TIMESTAMP_NTZ, which is every LOADED_AT in RAW. Owning it also means the
-contract's definition of stale is the one that runs.
+Freshness uses a custom DMF (ops/20_quality.sql) because the system one refuses
+TIMESTAMP_NTZ, which is every LOADED_AT in RAW. A DMF body must be
+deterministic, so it cannot read the clock: it returns the newest timestamp and
+the calling statement subtracts it from SYSDATE(). The session is pinned to UTC
+so the NTZ values and the clock agree.
 """
 import json
 from dataclasses import dataclass
@@ -42,7 +44,7 @@ from .detect import BREAKING, MEDIUM, LOW, Finding
 from .snow import execute, query
 
 DMF_SCHEMA = "FIN_AIWH.META"
-FRESHNESS_DMF = f"{DMF_SCHEMA}.FRESHNESS_NTZ_HOURS"
+FRESHNESS_DMF = f"{DMF_SCHEMA}.NEWEST_EPOCH_NTZ"
 
 SYSTEM_DMFS = {
     "NULL_COUNT", "NULL_PERCENT", "DUPLICATE_COUNT", "UNIQUE_COUNT",
@@ -76,7 +78,13 @@ class Check:
 
     def sql(self) -> str:
         cols = ", ".join(self.columns) if self.columns else "*"
-        return f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"
+        call = f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"
+        if self.change_type == "STALE":
+            # The DMF returns the newest load as epoch seconds (a DMF body may
+            # not read the clock). Hours behind is computed here, against
+            # SYSDATE() in the same statement, so one clock is used throughout.
+            return f"(DATE_PART(EPOCH_SECOND, SYSDATE()) - {call}) / 3600"
+        return call
 
     def breached(self, value: float | None) -> str | None:
         """A reason, or None if the value is within the contract."""

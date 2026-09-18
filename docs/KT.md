@@ -365,7 +365,9 @@ invented:
 | Design point | Why |
 |---|---|
 | Synchronous, not scheduled | `SELECT SNOWFLAKE.CORE.NULL_COUNT(SELECT col FROM t)` answers now. The control plane decides on a measurement it just took |
-| Custom freshness DMF | `SNOWFLAKE.CORE.FRESHNESS` refuses `TIMESTAMP_NTZ`, which is every `LOADED_AT` in RAW. `FIN_AIWH.META.FRESHNESS_NTZ_HOURS` owns the definition |
+| Custom freshness DMF | `SNOWFLAKE.CORE.FRESHNESS` refuses `TIMESTAMP_NTZ`, which is every `LOADED_AT` in RAW. A DMF body may not read the clock, so `FIN_AIWH.META.NEWEST_EPOCH_NTZ` returns the newest load and `detect` subtracts it from `SYSDATE()` in the same statement |
+| Session pinned to UTC | NTZ carries no zone. One clock for what `load` and the scenarios write and what `detect` compares against |
+| `load` stamps `LOADED_AT` | the seed's fixed timestamp would make every table stale a day after loading |
 | One statement per table | all of a table's DMFs in one `SELECT`, 9 statements for 9 tables |
 | Fingerprint carries the threshold, not the value | a breach that persists for a week is one event, not seven |
 | Tables with BREAKING schema drift are skipped | a DMF on a dropped column would only fail |

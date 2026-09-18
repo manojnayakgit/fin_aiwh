@@ -14,22 +14,26 @@ GRANT DATABASE ROLE SNOWFLAKE.DATA_METRIC_USER TO ROLE FIN_AIWH_ENG;
 --     use: detect measures synchronously. This is an APPLICATION role.
 GRANT APPLICATION ROLE SNOWFLAKE.DATA_QUALITY_MONITORING_VIEWER TO ROLE FIN_AIWH_ENG;
 
--- 2. Freshness in hours, on the timestamp type RAW actually uses.
---    Returns how far behind now the newest row is. The contract's
---    max_lag_hours is compared against this directly.
-CREATE OR REPLACE DATA METRIC FUNCTION FIN_AIWH.META.FRESHNESS_NTZ_HOURS(
+-- 2. Freshness. A DMF body must be deterministic, so it cannot know what
+--    time it is: that is why Snowflake ships FRESHNESS as a special case.
+--    This one returns the newest timestamp as epoch seconds, and the caller
+--    subtracts it from now. Two consequences, both fine:
+--      - detect compares against SYSDATE() in the same statement
+--      - attached, Snowflake's history records the newest load time, not a lag
+CREATE OR REPLACE DATA METRIC FUNCTION FIN_AIWH.META.NEWEST_EPOCH_NTZ(
     arg_t TABLE(arg_c TIMESTAMP_NTZ)
 )
 RETURNS NUMBER
 AS
 $$
-    SELECT TIMESTAMPDIFF(HOUR, MAX(arg_c), CURRENT_TIMESTAMP()::TIMESTAMP_NTZ)
-    FROM arg_t
+    SELECT DATE_PART(EPOCH_SECOND, MAX(arg_c)) FROM arg_t
 $$;
 
-GRANT USAGE ON FUNCTION FIN_AIWH.META.FRESHNESS_NTZ_HOURS(TABLE(TIMESTAMP_NTZ)) TO ROLE FIN_AIWH_ENG;
+GRANT USAGE ON FUNCTION FIN_AIWH.META.NEWEST_EPOCH_NTZ(TABLE(TIMESTAMP_NTZ)) TO ROLE FIN_AIWH_ENG;
 
 -- 3. Prove it, as ACCOUNTADMIN, before handing to the CLI.
 SELECT SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT INVOICE_ID FROM FIN_AIWH.RAW.AP_INVOICE)  AS dup_invoice_ids,
        SNOWFLAKE.CORE.NULL_COUNT(SELECT GROSS_AMOUNT FROM FIN_AIWH.RAW.AP_INVOICE)      AS null_amounts,
-       FIN_AIWH.META.FRESHNESS_NTZ_HOURS(SELECT LOADED_AT FROM FIN_AIWH.RAW.AP_INVOICE) AS hours_behind;
+       (DATE_PART(EPOCH_SECOND, SYSDATE())
+          - FIN_AIWH.META.NEWEST_EPOCH_NTZ(SELECT LOADED_AT FROM FIN_AIWH.RAW.AP_INVOICE)) / 3600
+                                                                                           AS hours_behind;

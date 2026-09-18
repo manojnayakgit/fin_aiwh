@@ -136,3 +136,21 @@ def test_measure_issues_one_statement_per_table(monkeypatch):
     assert len(seen) == 2
     assert all(v == 0.0 for v in out.values())
     assert "SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT INVOICE_ID FROM FIN_AIWH.RAW.AP_INVOICE)" in seen[0]
+
+
+def test_stale_check_computes_lag_in_the_statement_not_in_the_dmf():
+    """A DMF body may not read the clock, so the subtraction lives in the caller."""
+    st = next(c for c in desired(contract()) if c.change_type == "STALE")
+    sql = st.sql()
+    assert sql.startswith("(DATE_PART(EPOCH_SECOND, SYSDATE()) - ")
+    assert "NEWEST_EPOCH_NTZ(SELECT LOADED_AT FROM FIN_AIWH.RAW.AP_INVOICE)" in sql
+    assert sql.endswith(") / 3600")
+
+
+def test_scenario_scripts_and_load_use_one_clock():
+    """Everything the CLI writes into an NTZ column derives from the session clock."""
+    from control.config import ROOT
+    for f in ROOT.glob("ops/scenarios/*.sql"):
+        s = f.read_text().upper()
+        if "LOADED_AT" in s and ("UPDATE" in s or "INSERT" in s):
+            assert "SYSDATE()" in s or "CURRENT_TIMESTAMP()" in s, f.name

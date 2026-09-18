@@ -1089,3 +1089,16 @@ did not cause it, and the gate judges the change.
 One scenario was wrong on the first write. Deleting a duplicate `WHERE key = X`
 removes both copies, because Snowflake has no row id. Scenario 11 rebuilds the
 table from its own distinct rows instead.
+
+**Two things Snowflake would not let the first version do.** A DMF body must be
+deterministic, so it cannot call `CURRENT_TIMESTAMP()`; that is why the system
+`FRESHNESS` exists as a special case. The custom DMF now returns the newest
+timestamp as epoch seconds and the calling statement does the subtraction. And
+`DATA_QUALITY_MONITORING_VIEWER` is an application role, not a database role,
+and is only needed for Snowflake's own history view, which the CLI never reads.
+
+**One thing the seed would have done to the demo.** Every `LOADED_AT` in the
+generated CSVs is a fixed constant. A day after loading, all nine tables would
+have reported STALE with nothing wrong. `load` now stamps the real load time,
+and the session is pinned to UTC so the NTZ values the CLI writes and the clock
+it compares against cannot drift apart by a timezone.

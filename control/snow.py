@@ -36,6 +36,10 @@ def connect(settings: Settings | None = None, schema: str | None = None):
         database=s.database,
         schema=schema or s.schema,
         client_session_keep_alive=False,
+        # Every LOADED_AT is TIMESTAMP_NTZ, which carries no zone. Pinning the
+        # session to UTC means "now" cast to NTZ, SYSDATE(), and the freshness
+        # comparison all agree, whatever the account default is.
+        session_parameters={"TIMEZONE": "UTC"},
     )
     try:
         yield conn
