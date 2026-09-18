@@ -1,10 +1,12 @@
 # fin_aiwh release gate
 #
 # Every pull request is judged twice:
-#   1. Do the contracts THIS PR CHANGES match what the warehouse actually holds?
+#   1. Do the contracts THIS CHANGE TOUCHES match what the warehouse actually holds?
 #      A PR that adopts a LOW change passes. A PR that ignores a BREAKING one fails.
-#      Drift on datasets the PR does not touch is the scheduled detector's problem,
-#      not this PR's. A PR that changes no contracts is checked against all of them.
+#      Drift on datasets the change does not touch is the scheduled detector's
+#      problem, not this change's. A change that touches no contracts gets an
+#      informational detect run and cannot fail on it: the gate judges the change,
+#      never the state of the warehouse.
 #   2. Does the dbt project build against the CI schema with mart contracts enforced?
 #
 # Nothing here writes to META. Persisting drift is the scheduled detector's job,
@@ -56,6 +58,7 @@ jobs:
           printf '%s' "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > .secrets/ci_rsa_key.p8
           chmod 600 .secrets/ci_rsa_key.p8
       - run: python -m control.cli ping
+      - run: python -m control.cli dbt parse --no-version-check
       - name: scope to contracts changed in this PR
         id: scope
         run: |
@@ -72,8 +75,15 @@ jobs:
           done
           echo "args=$args" >> "$GITHUB_OUTPUT"
           echo "scope: ${args:-all contracts}"
-      - name: detect against this PR's contracts
-        run: python -m control.cli detect --dry-run --fail-on-breaking ${{ steps.scope.outputs.args }}
+      - name: detect against the contracts this change touches
+        run: |
+          args="${{ steps.scope.outputs.args }}"
+          if [ -z "$args" ]; then
+            echo "::notice::no contract files changed. detect is informational; breaking drift elsewhere does not fail this change."
+            python -m control.cli detect --dry-run
+          else
+            python -m control.cli detect --dry-run --fail-on-breaking $args
+          fi
 
   build:
     name: dbt build (CI schema)

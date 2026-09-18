@@ -539,6 +539,7 @@ python -m pytest tests -q
 |---|---|
 | Reads only | Persisting events is the scheduled detector's job. A gate that wrote would double count |
 | Scoped to changed contracts | Diffs against base, reads `dataset` from each changed file. A correct PR must not fail on unrelated drift |
+| Informational when nothing changed | A change touching no contracts still runs detect, but cannot fail on it. The gate judges the change, never the warehouse |
 | CI schema | PR builds never touch STAGING or MARTS |
 
 ---
@@ -561,7 +562,6 @@ python -m pytest tests -q
 | Item | Effect |
 |---|---|
 | Branch protection not configured | Agent refuses auto merge, LOW path needs a human click |
-| Gate never observed running | Workflow and secrets exist, no run watched |
 | Jira handoff | Deferred |
 
 ### Known limits
