@@ -1,3 +1,5 @@
+-- shield: STATUS may now be null upstream, guarded by a test, see https://github.com/manojnayakgit/fin_aiwh/issues/4
+
 select
     invoice_id,
     customer_id,
