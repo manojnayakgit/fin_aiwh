@@ -221,6 +221,11 @@ stays silent about that dataset.
 |---|---|---|
 | Model | dbt `manifest.json` `child_map`, walked transitively from the source | Exact. dbt derives it from compiled SQL |
 | Column | Each direct child model's SQL: names the column, or `select *`, or neither | Stated on every result: "references the column", "selects *", or not affected |
+| Report | dbt **exposures** in `dbt/models/marts/exposures.yml`, one per dashboard or extract that reads a mart | Exact. Declared with an owner |
+
+Reports lead every impact summary. "BANK_REF dropped" reads as "breaks AP
+Aging Pack (AP Controller), Bank Reconciliation Extract (Treasury Ops)". Add a
+new consumer by adding an exposure; nothing else changes.
 
 A column no staging model selects correctly reports no impact. A missing
 manifest reports `unknown`, never "nothing affected".
@@ -230,7 +235,7 @@ Shown in: `detect` (`breaks` column, red line naming marts hit by BREAKING),
 headline, PR "Downstream impact" section, and the agent prompt.
 
 Limits: needs `dbt parse` to have run. Column match is textual, errs toward
-over reporting. Covers the dbt graph only; add dbt exposures to include BI.
+over reporting. A consumer not declared as an exposure is invisible.
 
 ### 4.7 dbt layer
 
@@ -240,6 +245,7 @@ over reporting. Covers the dbt graph only; add dbt exposures to include BI.
 | marts | `fct_ap_open_items`, `fct_ar_open_items` | One row per invoice, paid vs outstanding, USD, aging bucket. **Enforced contracts** |
 | marts | `agg_ap_aging`, `agg_ar_aging` | By entity and bucket |
 | marts | `kpi_dso_dpo` | DSO/DPO per entity, trailing 90 days |
+| exposures | 4 declared | AP Aging Pack, AR Aging Pack, Working Capital KPIs, Bank Reconciliation Extract |
 
 22 tests. Amounts cast explicitly (`::number(18,2)`) because Snowflake widens
 through arithmetic and the enforced contract would otherwise fail.
@@ -534,6 +540,7 @@ python -m pytest tests -q
 | CI reuses `FIN_AIWH_SVC` | Production would use a separate CI user and narrower role |
 | Synthetic seed data | Demo scale, not TB scale |
 | Column lineage is textual | Errs toward over reporting |
+| Undeclared consumers are invisible | Every report must be an exposure |
 
 ---
 
@@ -542,9 +549,9 @@ python -m pytest tests -q
 | Priority | Item | Why |
 |---|---|---|
 | 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
-| 3 | Jira handoff for MEDIUM | Events land in the team's real queue |
-| 4 | Agent remediates BREAKING | Compatibility view, backfill, staged contract with deprecation window |
-| 5 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
+| later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
+| 3 | Agent remediates BREAKING | Compatibility view, backfill, staged contract with deprecation window |
+| 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
 **Replacing Claude.** The agent is the only hosted model call, behind one
 function with a structured interface. Swapping to a self-hosted model is

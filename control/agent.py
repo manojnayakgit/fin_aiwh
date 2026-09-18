@@ -436,11 +436,13 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
 def escalate(bundle: Bundle) -> str:
     """BREAKING gets an issue, never a PR. Returns the issue url."""
     _ensure_labels()
-    marts = sorted({m for e in bundle.events
-                    for m in (getattr(bundle.impact_for(e), "marts", None) or [])})
+    imps = [bundle.impact_for(e) for e in bundle.events]
+    reports = sorted({r["label"] for i in imps if i for r in i.reports})
+    marts = sorted({m for i in imps if i for m in i.marts})
+    hit = [f"**{r}**" for r in reports] or [f"`{m}`" for m in marts]
     headline = (
         f"Breaking drift on `{bundle.dataset_key}`."
-        + (f" **This affects {', '.join('`' + m + '`' for m in marts)}.**" if marts else "")
+        + (f" This affects {', '.join(hit)}." if hit else "")
         + " The release gate will fail until this is resolved."
     )
     lines = [

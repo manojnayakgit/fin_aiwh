@@ -176,11 +176,15 @@ def cmd_detect(args):
         console.print("[yellow]no dbt manifest, so downstream impact is unknown.[/yellow] "
                       "[dim]run: python -m control.cli dbt parse[/dim]")
     else:
-        worst = [f for f in findings if f.severity == BREAKING and f.impact and f.impact.marts]
+        worst = [f for f in findings if f.severity == BREAKING and f.impact and not f.impact.empty]
         if worst:
-            hit = sorted({m for f in worst for m in f.impact.marts})
-            console.print(f"\n[bold red]marts affected by breaking drift:[/bold red] "
-                          + ", ".join(hit))
+            reports = sorted({r["label"] for f in worst for r in f.impact.reports})
+            marts = sorted({m for f in worst for m in f.impact.marts})
+            if reports:
+                console.print(f"\n[bold red]reports affected by breaking drift:[/bold red] "
+                              + ", ".join(reports))
+            if marts:
+                console.print(f"[red]marts:[/red] " + ", ".join(marts))
 
     if args.fail_on_breaking and any(f.severity == BREAKING for f in findings):
         console.print("[bold red]breaking drift present[/bold red]")
@@ -332,7 +336,7 @@ def cmd_status(_args):
             conn,
             """
             SELECT DATASET_KEY, OBJECT_NAME, CHANGE_TYPE, SEVERITY, STATUS,
-                   RESOLUTION_REF, IMPACT:marts AS MARTS
+                   RESOLUTION_REF, IMPACT:marts AS MARTS, IMPACT:reports AS REPORTS
             FROM FIN_AIWH.META.DRIFT_EVENT
             WHERE STATUS IN ('OPEN', 'PROPOSED', 'ESCALATED')
             ORDER BY CASE STATUS WHEN 'OPEN' THEN 0 WHEN 'ESCALATED' THEN 1 ELSE 2 END,
@@ -345,18 +349,19 @@ def cmd_status(_args):
     for c in contracts:
         console.print(f"  v{c['VERSION']}  {c['CONTRACT_KEY']}")
 
-    def marts_of(r):
-        m = r.get("MARTS")
-        if isinstance(m, str):
+    def _json(v):
+        if isinstance(v, str):
             try:
-                m = json.loads(m)
+                return json.loads(v)
             except (json.JSONDecodeError, TypeError):
-                m = None
-        return m or []
+                return None
+        return v
 
     def line(r):
-        marts = marts_of(r)
-        breaks = f"  [dim]breaks {', '.join(marts)}[/dim]" if marts else ""
+        reports = [x["label"] for x in (_json(r.get("REPORTS")) or [])]
+        marts = _json(r.get("MARTS")) or []
+        hit = reports or marts
+        breaks = f"  [dim]breaks {', '.join(hit)}[/dim]" if hit else ""
         ref = f"  [dim]{r['RESOLUTION_REF']}[/dim]" if r.get("RESOLUTION_REF") else ""
         return (f"  [{SEV_STYLE[r['SEVERITY']]}]{r['SEVERITY']:<8}[/] "
                 f"{r['DATASET_KEY']}.{r['OBJECT_NAME'] or '*'}  {r['CHANGE_TYPE']}{breaks}{ref}")
