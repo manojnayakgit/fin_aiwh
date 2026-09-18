@@ -829,3 +829,115 @@ the prose comma in a shield's `-- shield: … restored as NULL, see <issue>`
 swallowed the next column. Comments are stripped first now. A regression test
 walks every pass-through staging model in the repo and asserts it still carries
 its whole contract.
+
+
+**First live run found two more.** The verifier looked for the literal string
+`source('raw', 'AP_ACCRUAL')`, so a model that wrote it without the space was
+rejected for reading the wrong table — a true statement about the string and a
+false one about the SQL. And once the match was loosened, the model wrote the
+table name in lower case, which dbt parses happily and then cannot compile,
+because source names resolve case-sensitively against `sources.yml`. The second
+one is not a judgement call, so it is now rewritten to the canonical spelling
+rather than bounced back. Rejections also print the SQL now: a verifier that
+says no without showing what it read is hard to trust.
+
+
+---
+
+## The first live onboarding PR failed, and the failure was worth more than the PR
+
+`gh pr create` exited 1. The traceback was forty lines of subprocess internals
+and did not contain a single word of what `gh` had said, because `_run` used
+`check_output` and `CalledProcessError` prints the command and the exit code but
+not the output. That is fixed first: a publish failure now reports what the
+command actually said.
+
+The branch itself then told a stranger story. `git diff origin/main..onboard/ap_accrual`
+showed the PR deleting `docs/SCENARIOS.md` and reverting `control/onboard.py`.
+
+The branch was built on `975860d`. `origin/main` was at `dc7b76f`, three commits
+later. Those three commits existed only on the local machine when the agent ran.
+
+The agent branches from `origin/base` on purpose: it is what stopped an earlier
+PR from sweeping four unpushed commits into a contract change. That rule was
+right and is unchanged. What was missing is its other half. If local `base` is
+ahead of the remote, every local-only change shows up in the PR diff as a
+deletion, because the base genuinely does not have it. The agent already refused
+to run against a dirty tree. It now also refuses to publish against a base that
+has not been pushed, and says how many commits are missing.
+
+The third fix is smaller. The run died after `git push`, leaving the branch
+behind, so a retry failed on `git checkout -b`. Branches are now deleted and
+recreated from `origin/base`, and pushed with `--force-with-lease`. A PR that
+already exists still short-circuits before any of this, so the force can only
+ever overwrite the leftovers of an earlier failed run of the same agent.
+
+None of the three is about the model. All three are about the machinery around
+it, which is where the interesting failures keep turning up.
+
+---
+
+## History rewritten to a single author
+
+Commits had accumulated across three identities, plus GitHub as the committer on
+the three PR merges, plus `Co-authored-by` trailers naming both a second personal
+account and the model. GitHub counts each of those as a contributor.
+
+Every commit on `main` and the four live branches was rewritten to one identity.
+`Co-authored-by` and `Claude-Session` trailers were stripped from all of them,
+and the unrewritten local safety branch that still carried them was deleted once
+the bundle backup was verified. The resulting tree is
+byte-identical to the one before the rewrite, verified by `git diff` between the
+old and new tips: only authorship metadata and commit messages changed.
+
+The repo now pins the identity locally, so no future commit here can pick up a
+different global config:
+
+```
+git config user.name  manojnayakgit
+git config user.email 39649907+manojnayakgit@users.noreply.github.com
+```
+
+The `@users.noreply.github.com` form is used on purpose. GitHub attributes a
+commit to an account by email, and that address is derived from the account
+itself, so attribution cannot miss and no personal address is published.
+
+A full pre-rewrite backup is at `.git/backup-preRewrite.bundle`, with the old
+local and remote SHAs recorded beside it. Restoring from it is possible until
+the objects are garbage collected on the remote.
+
+Known consequence: the merged pull requests reference commit SHAs that no longer
+exist on `main`. The PRs and their discussion remain readable, but their commit
+links are orphaned. That is the unavoidable cost of rewriting history, and it is
+worth stating rather than discovering later.
+
+
+---
+
+## The gate failed the first onboarding PR, correctly, for the wrong reason
+
+PR #7 opened cleanly: contract, source entry, staging model, tests. The gate
+went red on `rule tests`, one failure out of 106:
+
+```
+assert len(contracts) == 8
+AssertionError: assert 9 == 8
+```
+
+`test_all_contracts_parse` asserted a hard count. Onboarding a new source is the
+thing this system exists to do, so the test failed precisely because the system
+worked. Any test that has to be edited every time the product succeeds is
+measuring the wrong property.
+
+It now derives the expected count from the contract directory listing and
+asserts the core AP/AR datasets are present by name. Adding a ninth contract
+passes. Deleting a contract file, or shipping two contracts claiming the same
+dataset, still fails.
+
+Fixing it surfaced a second hole that had been passing by luck.
+`test_every_contract_has_a_primary_key_and_owner` asserted `owner != "unassigned"`.
+The agent sets `unassigned-needs-review` on a brand new dataset, which is not the
+literal string `unassigned`, so the check passed while the dataset was in fact
+ownerless. The rule is now explicit: an owner must be non-empty, and the only
+permitted `unassigned*` value is the onboarding marker the agent is required to
+use, which a reviewer replaces before merge.
