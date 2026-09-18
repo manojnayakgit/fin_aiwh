@@ -3,7 +3,7 @@ import pytest
 
 from control.contracts import Contract, ContractColumn, load_contracts
 from control.onboard import (
-    Onboarding, add_schema, add_source, selected_columns, verify,
+    Onboarding, add_schema, add_source, build, canonical_source, selected_columns, verify,
 )
 from control.onboard import tests_for as contract_tests   # not a pytest test
 
@@ -184,3 +184,21 @@ def test_every_pass_through_staging_model_still_carries_its_contract():
 def test_source_reference_accepts_any_spacing_and_quotes(ref):
     sql = GOOD_SQL.replace("{{ source('raw', 'AP_ACCRUAL') }}", ref)
     assert verify(ob(sql), contract()).ok
+
+
+@pytest.mark.parametrize("ref", [
+    "{{ source('raw', 'ap_accrual') }}",
+    '{{ source("raw", "Ap_Accrual") }}',
+    "{{source( 'raw' , 'ap_accrual' )}}",
+])
+def test_the_source_reference_is_rewritten_to_what_dbt_will_resolve(ref):
+    """dbt matches source names case-sensitively against sources.yml."""
+    sql = GOOD_SQL.replace("{{ source('raw', 'AP_ACCRUAL') }}", ref)
+    assert "source('raw', 'AP_ACCRUAL')" in canonical_source(sql, "AP_ACCRUAL")
+
+
+def test_build_canonicalises_before_it_verifies():
+    sql = GOOD_SQL.replace("'AP_ACCRUAL'", "'ap_accrual'")
+    out = build(contract(), sql)
+    assert out.ok, out.errors
+    assert "source('raw', 'AP_ACCRUAL')" in out.staging_sql

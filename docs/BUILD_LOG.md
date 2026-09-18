@@ -829,3 +829,14 @@ the prose comma in a shield's `-- shield: … restored as NULL, see <issue>`
 swallowed the next column. Comments are stripped first now. A regression test
 walks every pass-through staging model in the repo and asserts it still carries
 its whole contract.
+
+
+**First live run found two more.** The verifier looked for the literal string
+`source('raw', 'AP_ACCRUAL')`, so a model that wrote it without the space was
+rejected for reading the wrong table — a true statement about the string and a
+false one about the SQL. And once the match was loosened, the model wrote the
+table name in lower case, which dbt parses happily and then cannot compile,
+because source names resolve case-sensitively against `sources.yml`. The second
+one is not a judgement call, so it is now rewritten to the canonical spelling
+rather than bounced back. Rejections also print the SQL now: a verifier that
+says no without showing what it read is hard to trust.

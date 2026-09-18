@@ -167,14 +167,28 @@ def selected_columns(sql: str) -> set[str]:
     return out
 
 
+def _source_ref(table: str) -> re.Pattern:
+    return re.compile(r"source\(\s*['\"]raw['\"]\s*,\s*['\"]" + re.escape(table)
+                      + r"['\"]\s*\)", re.IGNORECASE)
+
+
+def canonical_source(sql: str, table: str) -> str:
+    """Rewrite the source reference to the one spelling dbt will resolve.
+
+    dbt matches a source name against sources.yml case-sensitively, and the
+    entries there are upper case. A model that reads source('raw', 'ap_accrual')
+    parses fine and then fails to compile. Spelling is mechanical, so it is
+    corrected here rather than bounced back to the model.
+    """
+    return _source_ref(table).sub(f"source('raw', '{table}')", sql)
+
+
 def verify(ob: Onboarding, contract: Contract) -> Onboarding:
     sql = ob.staging_sql
     if not sql.strip():
         ob.errors.append("no staging model was produced")
         return ob
-    src = re.compile(r"source\(\s*['\"]raw['\"]\s*,\s*['\"]" + re.escape(ob.table)
-                     + r"['\"]\s*\)", re.IGNORECASE)
-    if not src.search(sql):
+    if not _source_ref(ob.table).search(sql):
         ob.errors.append(f"staging model does not read from source('raw', '{ob.table}')")
 
     want = {c.name.upper() for c in contract.columns}
@@ -195,7 +209,8 @@ def verify(ob: Onboarding, contract: Contract) -> Onboarding:
 def build(contract: Contract, staging_sql: str, notes: str = "") -> Onboarding:
     table = contract.table
     ob = Onboarding(dataset_key=contract.dataset, table=table,
-                    staging_sql=staging_sql.rstrip() + "\n", notes=notes)
+                    staging_sql=canonical_source(staging_sql.rstrip(), table) + "\n",
+                    notes=notes)
     verify(ob, contract)
 
     src, err = add_source(table, SOURCES.read_text())

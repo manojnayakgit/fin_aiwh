@@ -315,6 +315,11 @@ Then code checks the model's work before anything is pushed:
 | reads `source('raw', '<TABLE>')` | a model pointed at the wrong table |
 | no `select *` | a column list a reviewer cannot read |
 
+One thing is corrected rather than rejected: dbt resolves a source name
+case-sensitively against `sources.yml`, so `source('raw', 'ap_accrual')` parses
+and then fails to compile. Spelling is mechanical, so the reference is rewritten
+to the canonical form before verification.
+
 Tests come only from what the contract already asserts: `unique, not_null` on
 the key, `not_null` on any column declared not nullable. Nothing invented.
 
