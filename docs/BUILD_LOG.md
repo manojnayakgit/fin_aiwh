@@ -1046,3 +1046,46 @@ no manual step other than clicking Merge on a pull request the system wrote:
 What remains is not detection, drafting or recovery. It is branch protection,
 so the LOW path needs no click at all, and content governance, so the contract
 covers what is in the columns and not only their shape.
+
+
+---
+
+## Content governance: the contract now covers what is in the columns
+
+Until today the contract governed shape. A table could match every column,
+type and nullability while carrying a duplicate invoice key or three days of
+missing loads, and the system would report it clean. The `freshness` block was
+parsed, hashed and never read.
+
+The probe settled the design. `SNOWFLAKE.CORE.NULL_COUNT` returned `0` on a
+live table: Data Metric Functions work on this account. `SNOWFLAKE.CORE.FRESHNESS`
+refused `TIMESTAMP_NTZ`, which is every `LOADED_AT` in RAW. So freshness is a
+one-line custom DMF, which is better anyway: the contract's definition of stale
+is the one that runs.
+
+Every check is derived from something the contract already says, the same rule
+onboarding uses for tests. Primary key becomes a duplicate check. NOT NULL
+becomes a null check. `max_lag_hours` becomes a stale check. An optional
+`expectations` block covers what cannot be derived. Nothing is invented.
+
+Three decisions.
+
+DMFs are called synchronously, inside `detect`. Snowflake can also run them on a
+schedule and keep history, and `quality attach` sets that up, but the control
+plane decides on a measurement it just took, never on one Snowflake took on its
+own clock.
+
+The fingerprint carries the threshold, not the measured value. A duplicate that
+persists for a week is one event, not seven.
+
+A content breach is always an issue and never a PR, whatever its severity. No
+contract change makes bad data good. And the issue closes itself: the agent
+re-measures on every run, and a breach back inside the contract closes its issue
+and dismisses its event.
+
+The gate stays schema-only. A duplicate key in RAW is real, but the pull request
+did not cause it, and the gate judges the change.
+
+One scenario was wrong on the first write. Deleting a duplicate `WHERE key = X`
+removes both copies, because Snowflake has no row id. Scenario 11 rebuilds the
+table from its own distinct rows instead.

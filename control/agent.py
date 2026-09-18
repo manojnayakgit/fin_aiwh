@@ -837,3 +837,52 @@ def publish_retirement(r, base: str | None = None) -> str:
         return url
     finally:
         _run(["git", "checkout", "-q", base])
+
+
+# --------------------------------------------------------------------------
+# content breaches
+#
+# A duplicate key, a null in a required column or a stale table cannot be fixed
+# by changing a contract. The contract is right and the data is wrong. So a
+# content breach is always an issue, whatever its severity, and it is closed by
+# the agent itself the moment the measurement is back inside the contract.
+# --------------------------------------------------------------------------
+
+def escalate_quality(bundle: Bundle) -> str:
+    _ensure_labels()
+    subprocess.run(["gh", "label", "create", "quality", "--color", "D93F0B",
+                    "--description", "data breaches its contract", "--force"],
+                   cwd=ROOT, capture_output=True, text=True)
+    imps = [bundle.impact_for(e) for e in bundle.events]
+    reports = sorted({r["label"] for i in imps if i for r in i.reports})
+    hit = ", ".join(f"**{r}**" for r in reports)
+    lines = [
+        f"The data in `{bundle.dataset_key}` breaches its contract. The schema is "
+        f"fine; the contents are not." + (f" Feeds {hit}." if hit else ""),
+        "",
+        "| severity | breach | on | measured |",
+        "|---|---|---|---|",
+    ]
+    for e in bundle.events:
+        lines.append(f"| {e['SEVERITY']} | {e['CHANGE_TYPE']} | `{e['OBJECT_NAME']}` | {e['RATIONALE']} |")
+    lines += [
+        "",
+        "No pull request is proposed: no contract change makes bad data good. "
+        "Fix the data at source. This issue closes itself on the next agent run "
+        "after the measurement is back within the contract.",
+        "",
+        f"Drift events: {', '.join(bundle.event_ids)}",
+    ]
+    worst = bundle.worst.lower()
+    return _run([
+        "gh", "issue", "create",
+        "--title", f"Data breaches contract: {bundle.dataset_key}",
+        "--body", "\n".join(lines),
+        "--label", "drift", "--label", "quality", "--label", worst,
+    ]).splitlines()[-1]
+
+
+def close_quality_issue(url: str, why: str):
+    subprocess.run(["gh", "issue", "close", url, "--comment",
+                    f"Measurement is back within the contract: {why}. Closed by the agent."],
+                   cwd=ROOT, capture_output=True, text=True)

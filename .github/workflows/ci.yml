@@ -80,9 +80,9 @@ jobs:
           args="${{ steps.scope.outputs.args }}"
           if [ -z "$args" ]; then
             echo "::notice::no contract files changed. detect is informational; breaking drift elsewhere does not fail this change."
-            python -m control.cli detect --dry-run
+            python -m control.cli detect --dry-run --no-quality
           else
-            python -m control.cli detect --dry-run --fail-on-breaking $args
+            python -m control.cli detect --dry-run --fail-on-breaking --no-quality $args
           fi
 
   build:

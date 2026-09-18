@@ -16,14 +16,15 @@ from .detect import (
     BREAKING, MEDIUM, attach_impact, diff_all, fetch_observed, new_run_id, persist,
     snapshot_observed,
 )
-from .agent import (BREAKING as _B, breaking_events, bundle_events, draft, draft_staging,
-                    escalate, github_outcome, mark, open_events, pending_events, publish,
-                    publish_onboarding, publish_retirement, publish_shield, set_status,
-                    verify)
+from .agent import (BREAKING as _B, breaking_events, bundle_events, close_quality_issue,
+                    draft, draft_staging, escalate, escalate_quality, github_outcome, mark,
+                    open_events, pending_events, publish, publish_onboarding,
+                    publish_retirement, publish_shield, set_status, verify)
 from .lineage import Lineage
 from .load import load_all
 from .register import register
 from . import onboard as onboard_mod
+from . import quality as quality_mod
 from . import shield as shield_mod
 from .snow import connect, execute, execute_script, query
 
@@ -141,6 +142,19 @@ def cmd_detect(args):
             observed = {k: v for k, v in observed.items() if k in wanted}
         findings = diff_all(contracts, observed)
 
+        # Content, by the same contracts. Only tables that exist and match are
+        # measured: a DMF on a column that was dropped upstream would just fail.
+        content: list = []
+        if not args.no_quality:
+            broken = {f.dataset_key for f in findings if f.severity == BREAKING}
+            measurable = [c for c in contracts if c.dataset in observed and c.dataset not in broken]
+            try:
+                content = quality_mod.check_all(conn, measurable)
+            except Exception as e:  # noqa: BLE001
+                console.print(f"[yellow]content checks skipped:[/yellow] {str(e).splitlines()[0]}")
+                console.print("[dim]run ops/20_quality.sql once as ACCOUNTADMIN, or pass --no-quality[/dim]")
+        findings += content
+
     lineage = Lineage.load()
     attach_impact(findings, lineage)
 
@@ -160,7 +174,8 @@ def cmd_detect(args):
                 + (f"  [dim]already being worked on {suppressed}[/dim]" if suppressed else ""))
     )
 
-    active = {(f.dataset_key.split(".")[-1], (f.object_name or "").upper()) for f in findings}
+    schema_only = [f for f in findings if f.change_type not in quality_mod.QUALITY_TYPES]
+    active = {(f.dataset_key.split(".")[-1], (f.object_name or "").upper()) for f in schema_only}
     for table, col, note in shield_mod.stale(active):
         console.print(f"[yellow]stale shield:[/yellow] stg_{table.lower()} {col} no longer "
                       f"diverges, the shield can be removed  [dim]{note}[/dim]")
@@ -357,12 +372,67 @@ def _retire_stale(active: set[tuple[str, str]], dataset: str | None, dry_run: bo
     return rc
 
 
+def _quality_pass(conn, s, contracts, observed, dataset: str | None, dry_run: bool) -> int:
+    """Content breaches: open an issue for each new one, close the ones that cleared.
+
+    Both directions consult a fresh measurement, never the event's own status.
+    """
+    live = quality_mod.check_all(conn, [c for c in contracts if c.dataset in observed])
+    live_keys = {(f.dataset_key, f.object_name) for f in live}
+
+    # 1. breaches that cleared: close the issue, dismiss the event
+    esc = query(conn, """
+        SELECT EVENT_ID, DATASET_KEY, CHANGE_TYPE, OBJECT_NAME, RESOLUTION_REF
+        FROM FIN_AIWH.META.DRIFT_EVENT
+        WHERE STATUS = 'ESCALATED' AND CHANGE_TYPE IN (%s)
+    """ % ",".join(f"'{q}'" for q in sorted(quality_mod.QUALITY_TYPES)))
+    for e in esc:
+        if dataset and e["DATASET_KEY"] != dataset.upper():
+            continue
+        if (e["DATASET_KEY"], e["OBJECT_NAME"]) in live_keys:
+            continue
+        console.print(f"[bold]{e['DATASET_KEY']}[/bold]  {e['CHANGE_TYPE']} on {e['OBJECT_NAME']} cleared")
+        if dry_run:
+            console.print(f"  → would close {e['RESOLUTION_REF']} and dismiss the event")
+            continue
+        if e["RESOLUTION_REF"]:
+            close_quality_issue(e["RESOLUTION_REF"], f"{e['CHANGE_TYPE']} on {e['OBJECT_NAME']}")
+        set_status(conn, [e["EVENT_ID"]], "DISMISSED")
+        console.print(f"  [green]closed[/green] {e['RESOLUTION_REF']}")
+
+    # 2. new breaches with an OPEN event: one issue per dataset
+    opened = [e for e in open_events(conn) if e["CHANGE_TYPE"] in quality_mod.QUALITY_TYPES]
+    if dataset:
+        opened = [e for e in opened if e["DATASET_KEY"] == dataset.upper()]
+    rc = 0
+    for b in bundle_events(opened, contracts, observed, Lineage.load()):
+        console.print(f"[bold]{b.dataset_key}[/bold]  data breaches contract  "
+                      f"worst [{SEV_STYLE[b.worst]}]{b.worst}[/]  {len(b.events)} breach(es)")
+        for e in b.events:
+            console.print(f"  [dim]{e['CHANGE_TYPE']} {e['OBJECT_NAME']}: {e['RATIONALE']}[/dim]")
+        if dry_run:
+            console.print("  → would open an issue (never a PR)\n")
+            continue
+        url = escalate_quality(b)
+        mark(conn, b.event_ids, "ESCALATED", url)
+        console.print(f"  [red]issue[/red] {url}\n")
+    return rc
+
+
 def cmd_agent(args):
     s = load_settings()
     contracts = load_contracts()
     with connect(s) as conn:
         events = open_events(conn)
         observed = fetch_observed(conn, s.database, s.raw_schema)
+        # Content breaches are handled on their own: no contract change fixes
+        # bad data, so they never reach the drafting path below.
+        events = [e for e in events if e["CHANGE_TYPE"] not in quality_mod.QUALITY_TYPES]
+        try:
+            quality_rc = _quality_pass(conn, s, contracts, observed, args.dataset, args.dry_run)
+        except Exception as e:  # noqa: BLE001
+            quality_rc = 0
+            console.print(f"[yellow]content pass skipped:[/yellow] {str(e).splitlines()[0]}")
     bundles = bundle_events(events, contracts, observed, Lineage.load())
     if args.dataset:
         bundles = [b for b in bundles if b.dataset_key == args.dataset.upper()]
@@ -374,7 +444,7 @@ def cmd_agent(args):
 
     if not bundles and args.dry_run:
         console.print("[green]no open drift, nothing to do[/green]")
-        return retired_rc
+        return retired_rc or quality_rc
     if bundles:
         console.print(f"{len(events)} open event(s) across {len(bundles)} dataset(s)\n")
     rc = 0
@@ -386,7 +456,7 @@ def cmd_agent(args):
             prior = [e for e in breaking_events(conn) if e["STATUS"] == "ESCALATED"]
         if not bundles and not prior:
             console.print("[green]no open drift, nothing to do[/green]")
-            return retired_rc
+            return retired_rc or quality_rc
         open_keys = {b.dataset_key for b in bundles}
         for pb in bundle_events(prior, contracts, observed, Lineage.load()):
             if pb.dataset_key in open_keys:
@@ -458,7 +528,7 @@ def cmd_agent(args):
         style = "yellow" if "NOT enabled" in p.merge_note else "dim"
         console.print(f"  [green]PR[/green] {url}")
         console.print(f"  [{style}]{p.merge_note}[/]\n")
-    return rc or retired_rc
+    return rc or retired_rc or quality_rc
 
 
 def cmd_sync(args):
@@ -575,6 +645,8 @@ def main(argv=None):
     d.add_argument("--fail-on-breaking", action="store_true", help="exit 2 on breaking drift")
     d.add_argument("--dataset", action="append",
                    help="limit to these datasets, e.g. RAW.AP_INVOICE (repeatable)")
+    d.add_argument("--no-quality", action="store_true",
+                   help="schema only, skip the content checks (the gate uses this)")
     d.set_defaults(fn=cmd_detect)
 
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)

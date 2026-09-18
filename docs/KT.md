@@ -345,7 +345,42 @@ python -m control.cli agent --dataset RAW.AP_ACCRUAL --dry-run
 python -m control.cli agent --dataset RAW.AP_ACCRUAL
 ```
 
-### 4.10 Event lifecycle
+### 4.10 Content governance
+
+Schema drift compares `INFORMATION_SCHEMA` to the contract. This compares the
+**data** to the contract, with Snowflake Data Metric Functions as the
+measuring instrument. `control/quality.py`, run inside `detect`, so one run and
+one event table cover shape and content.
+
+Every check is derived from something the contract already states. Nothing is
+invented:
+
+| Contract says | Check | Severity | Why |
+|---|---|---|---|
+| `primary_key: [A]` | `DUPLICATE_COUNT(A) == 0` | BREAKING | every join fans out, every total double counts |
+| `nullable: false` | `NULL_COUNT(col) == 0` | BREAKING | what scenario 06's guard test caught, caught at source |
+| `freshness: max_lag_hours: N` | hours behind on the column `<= N` | MEDIUM | reports are correct but old; a human decides |
+| `expectations:` (optional) | any system DMF, `min` or `max` | as stated | for rules the contract cannot derive |
+
+| Design point | Why |
+|---|---|
+| Synchronous, not scheduled | `SELECT SNOWFLAKE.CORE.NULL_COUNT(SELECT col FROM t)` answers now. The control plane decides on a measurement it just took |
+| Custom freshness DMF | `SNOWFLAKE.CORE.FRESHNESS` refuses `TIMESTAMP_NTZ`, which is every `LOADED_AT` in RAW. `FIN_AIWH.META.FRESHNESS_NTZ_HOURS` owns the definition |
+| One statement per table | all of a table's DMFs in one `SELECT`, 9 statements for 9 tables |
+| Fingerprint carries the threshold, not the value | a breach that persists for a week is one event, not seven |
+| Tables with BREAKING schema drift are skipped | a DMF on a dropped column would only fail |
+| Always an issue, never a PR | no contract change makes bad data good |
+| Closes itself | `agent` re-measures on every run; a breach back inside the contract closes its issue and dismisses its event |
+| Gate is schema-only (`--no-quality`) | a duplicate key in RAW is real, but this PR did not cause it |
+
+`quality attach` is not needed for any of this. It reconciles the DMFs
+Snowflake keeps attached to each table with what the contract implies, for
+Snowflake-side history in `DATA_QUALITY_MONITORING_RESULTS` and for people who
+never run the CLI.
+
+Prerequisite, once, as ACCOUNTADMIN: `ops/20_quality.sql`. Enterprise Edition.
+
+### 4.11 Event lifecycle
 
 ```
 detect ─► OPEN ─┬─► PROPOSED ─► MERGED
@@ -572,6 +607,9 @@ what is deliberately not started, is in `docs/SCENARIOS.md`.
 | `06_nullability_relaxed` | NOT NULL dropped | NULLABILITY_RELAXED / BREAKING |
 | `07_new_ungoverned_source` | New table, no contract | DATASET_UNGOVERNED / MEDIUM |
 | `08_upstream_fixed` | 05 and 06 repaired at source | drift gone, both shields reported stale, `agent` proposes retirement |
+| `09_duplicate_key` | one invoice row duplicated | DUPLICATE_KEY / BREAKING, schema untouched |
+| `10_stale_source` | AR_RECEIPT stops loading | STALE / MEDIUM, 72h behind against 24h allowed |
+| `11_content_repaired` | 09 and 10 fixed at source | `agent` closes both issues, dismisses both events |
 | `99_reset` | Rebuild RAW to v1 | then `load`, `resolve --all` |
 
 All verified live. All safe to run twice.
@@ -629,7 +667,8 @@ nothing to do and exits clean.
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |
-| Console, sync, scheduled cycle, 120 tests | Done |
+| Content governance | Built and unit tested on the derivation and verdict rules. DMFs confirmed available on the account. Not yet fired live |
+| Console, sync, scheduled cycle, 134 tests | Done |
 
 ### Not done
 
@@ -658,7 +697,7 @@ nothing to do and exits clean.
 | 2 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
 | 3 | Staged contract change after a shield | For a column that is never coming back. Retirement covers the case where upstream repairs it |
-| 3 | Content governance with DMFs | Contracts govern shape only. An `expectations` block plus Snowflake Data Metric Functions would govern nulls, duplicates and freshness through the same severity model. Gated on Enterprise Edition, see `ops/probe_dmf.sql` |
+| 3 | Content governance, live | Built. Run `ops/20_quality.sql`, then scenarios 09 to 11 |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
 **Replacing Claude.** The agent is the only hosted model call, behind one

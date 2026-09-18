@@ -33,12 +33,16 @@ artifact that proves it happened.
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
 | 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** | PR #1 closed, **PR #7 merged** `99760b0` |
 | 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Passed** | PR #8 merged `de7e079`, PR #9 merged `1756b39` |
+| 09 | Duplicate key | one `AP_INVOICE` row duplicated | `DUPLICATE_KEY` / BREAKING | **Built, not merged** | issue expected, schema detection sees nothing |
+| 10 | Stale source | `AR_RECEIPT.LOADED_AT` set 3 days back | `STALE` / MEDIUM | **Built, not merged** | issue expected |
+| 11 | Content repaired | 09 and 10 fixed at source | breaches clear | **Built, not merged** | agent closes both issues |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
 
-8 scenario scripts, all re-runnable, all fired live, all resolved end to end.
-3 further rules covered by unit test with no live script.
+11 scenario scripts, all re-runnable. Eight fired live and resolved end to end.
+Three content scenarios are built and await their live run. 3 further rules
+covered by unit test with no live script.
 
 ---
 
@@ -193,6 +197,41 @@ a shield merged would have hit the same wall. That bug predates scenario 08.
 to their plain selects, the guard test is gone, and the `Closes` lines closed
 issues #3 and #4 on merge. The BREAKING path is now proven in both directions:
 break → escalate → shield → repair → retire → close.
+
+---
+
+### 09, 10, 11 — Content breaches · **Built, not merged**
+
+The first eight scenarios change the **shape** of a table. These change its
+**contents** and leave the shape alone, so schema detection is blind to all
+three by design. Only the content checks see them.
+
+| # | Change | Verdict | Why that severity |
+|---|---|---|---|
+| 09 | One invoice row duplicated | `DUPLICATE_KEY` / BREAKING | every join on `INVOICE_ID` fans out; the aging pack double counts one invoice quietly |
+| 10 | AR receipts stop loading, 72h behind | `STALE` / MEDIUM | every number stays plausible and drifts from true; a human decides how stale is too stale |
+| 11 | Both repaired | breaches clear | the agent closes both issues and dismisses both events on its next run |
+
+**Validated so far.** Fourteen unit tests on the derivation and verdict rules:
+a primary key becomes a duplicate check, a composite key is one check over all
+its columns, every NOT NULL column gets a null check and nullable ones do not,
+the freshness block becomes a stale check in hours, explicit expectations are
+honoured and unknown metrics ignored, a value over `max` or under `min` is a
+finding with the value in the rationale, a NULL measurement is a finding and
+not a pass, and the fingerprint is stable while a breach persists so a week of
+the same breach is one event.
+
+The account was probed first. `SNOWFLAKE.CORE.NULL_COUNT` returned `0` on a
+live table, so DMFs are available. `SNOWFLAKE.CORE.FRESHNESS` refused
+`TIMESTAMP_NTZ`, which is every `LOADED_AT` in RAW, so freshness is a custom
+DMF in `ops/20_quality.sql`.
+
+**What the AI does.** Nothing. No contract change makes bad data good, so
+content breaches never reach the drafting path. They become an issue, and the
+issue closes itself when the measurement is back inside the contract.
+
+**Not yet done.** `ops/20_quality.sql` as ACCOUNTADMIN, then the three
+scenarios live.
 
 ---
 
@@ -434,7 +473,6 @@ the source is fixed, and hides nothing from the control plane.
 | **Freshness enforcement** | Not started | Contracts declare a `freshness` block. Nothing reads it. A stale table that still has the right shape passes detection today |
 | **Branch protection on `main`** | Not configured | Until it is, the agent refuses to enable auto-merge, and correctly says why. The LOW path needs one human click that it should not need |
 | **One shield PR for all breaking datasets** | Not started | Two shields opened separately both fail the gate until the first merges, because the build is project-wide |
-| **Content governance (DMFs)** | Not started | Contracts govern shape, nothing governs nulls, duplicates or freshness. Gated on Snowflake edition, probe written |
 | **Live scenario for `DATASET_MISSING`** | Rule only | Dropping a contracted table live is destructive to the demo. The rule is unit tested |
 | **MEDIUM alone on a clean dataset** | Rule only | Every live MEDIUM so far has shared a dataset with a BREAKING event, so bundling routed it to escalation |
 
@@ -442,7 +480,7 @@ the source is fixed, and hides nothing from the control plane.
 
 ## 7. Test inventory
 
-120 tests, no Snowflake connection required, ~2s.
+134 tests, no Snowflake connection required, ~2s.
 
 | File | Tests | Covers |
 |---|---|---|
@@ -452,6 +490,7 @@ the source is fixed, and hides nothing from the control plane.
 | `tests/test_lineage.py` | 13 | model and column lineage from the dbt manifest, confidence levels |
 | `tests/test_shield.py` | 22 | shield planning, refusal to guess, staleness, retirement inverse and its refusals, shield idempotency |
 | `tests/test_ui.py` | 6 | console action allowlist |
+| `tests/test_quality.py` | 14 | check derivation from the contract, breach verdicts, fingerprint stability, one statement per table |
 | `tests/test_contracts.py` | 6 | parsing, unique dataset keys, ownership, canonicalisation, hashing |
 
 ```
