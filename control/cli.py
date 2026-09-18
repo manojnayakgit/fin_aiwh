@@ -16,11 +16,13 @@ from .detect import (
     BREAKING, MEDIUM, attach_impact, diff_all, fetch_observed, new_run_id, persist,
     snapshot_observed,
 )
-from .agent import (BREAKING as _B, bundle_events, draft, escalate, github_outcome,
-                    mark, open_events, pending_events, publish, set_status, verify)
+from .agent import (BREAKING as _B, breaking_events, bundle_events, draft, escalate,
+                    github_outcome, mark, open_events, pending_events, publish,
+                    publish_shield, set_status, verify)
 from .lineage import Lineage
 from .load import load_all
 from .register import register
+from . import shield as shield_mod
 from .snow import connect, execute, execute_script, query
 
 console = Console()
@@ -156,6 +158,11 @@ def cmd_detect(args):
                 + (f"  [dim]already being worked on {suppressed}[/dim]" if suppressed else ""))
     )
 
+    active = {(f.dataset_key.split(".")[-1], (f.object_name or "").upper()) for f in findings}
+    for table, col, note in shield_mod.stale(active):
+        console.print(f"[yellow]stale shield:[/yellow] stg_{table.lower()} {col} no longer "
+                      f"diverges, the shield can be removed  [dim]{note}[/dim]")
+
     if not findings:
         console.print("[green]warehouse matches every registered contract[/green]")
         return 0
@@ -230,6 +237,26 @@ def cmd_resolve(args):
     return 0
 
 
+def _shield(b, issue_url, settings):
+    """Try to keep the reports correct while upstream is fixed."""
+    breaking = [e for e in b.events if e["SEVERITY"] == "BREAKING"]
+    sh = shield_mod.build(breaking, b.contract, issue_url)
+    if not sh.patches:
+        if sh.unshieldable or sh.errors:
+            console.print("  [dim]no shield possible: "
+                          + "; ".join(sh.unshieldable + sh.errors) + "[/dim]")
+        return
+    if not sh.ok:
+        console.print("  [yellow]shield refused:[/yellow] " + "; ".join(sh.errors))
+        return
+    di = b.dataset_impact()
+    url = publish_shield(sh, issue_url, di.markdown() if di and not di.empty else None)
+    cols = ", ".join(p.column for p in sh.patches)
+    console.print(f"  [magenta]shield PR[/magenta] {url}  [dim]{cols}[/dim]")
+    for u in sh.unshieldable:
+        console.print(f"  [dim]not shielded: {u}[/dim]")
+
+
 def cmd_agent(args):
     s = load_settings()
     contracts = load_contracts()
@@ -239,12 +266,31 @@ def cmd_agent(args):
     bundles = bundle_events(events, contracts, observed, Lineage.load())
     if args.dataset:
         bundles = [b for b in bundles if b.dataset_key == args.dataset.upper()]
-    if not bundles:
+    if not bundles and args.dry_run:
         console.print("[green]no open drift, nothing to do[/green]")
         return 0
-
-    console.print(f"{len(events)} open event(s) across {len(bundles)} dataset(s)\n")
+    if bundles:
+        console.print(f"{len(events)} open event(s) across {len(bundles)} dataset(s)\n")
     rc = 0
+
+    # Breaking drift escalated on an earlier run has an issue but may have no
+    # shield yet. Offer one now, once, without re-escalating.
+    if not args.dry_run:
+        with connect(s) as conn:
+            prior = [e for e in breaking_events(conn) if e["STATUS"] == "ESCALATED"]
+        if not bundles and not prior:
+            console.print("[green]no open drift, nothing to do[/green]")
+            return 0
+        open_keys = {b.dataset_key for b in bundles}
+        for pb in bundle_events(prior, contracts, observed, Lineage.load()):
+            if pb.dataset_key in open_keys:
+                continue
+            if args.dataset and pb.dataset_key != args.dataset.upper():
+                continue
+            issue = next((e["RESOLUTION_REF"] for e in pb.events if e.get("RESOLUTION_REF")), None)
+            console.print(f"[bold]{pb.dataset_key}[/bold]  already escalated  {issue or ''}")
+            _shield(pb, issue, s)
+            console.print("")
     for b in bundles:
         di = b.dataset_impact()
         breaks = f"  [dim]touches {di.summary()}[/dim]" if di and not di.empty else ""
@@ -253,12 +299,14 @@ def cmd_agent(args):
 
         if b.worst == BREAKING:
             if args.dry_run:
-                console.print("  → would escalate (issue), no PR\n")
+                console.print("  → would escalate (issue) and propose a shield PR\n")
                 continue
             url = escalate(b)
             with connect(s) as conn:
                 mark(conn, b.event_ids, "ESCALATED", url)
-            console.print(f"  [red]escalated[/red] {url}\n")
+            console.print(f"  [red]escalated[/red] {url}")
+            _shield(b, url, s)
+            console.print("")
             continue
 
         p = verify(draft(b))

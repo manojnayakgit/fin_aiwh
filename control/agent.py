@@ -550,3 +550,63 @@ def set_status(conn, event_ids: list[str], status: str):
         "RESOLUTION_REF = RESOLUTION_REF WHERE EVENT_ID IN (" + ",".join(keys) + ")",
         params,
     )
+
+
+# --------------------------------------------------------------------------
+# shields: a PR that keeps the reports correct while upstream is fixed
+# --------------------------------------------------------------------------
+
+def breaking_events(conn) -> list[dict]:
+    """Escalated events too, so a shield can follow an issue opened last run."""
+    return query(
+        conn,
+        """
+        SELECT EVENT_ID, DATASET_KEY, CONTRACT_VERSION, CHANGE_TYPE, SEVERITY,
+               OBJECT_NAME, BEFORE_STATE, AFTER_STATE, RATIONALE, STATUS, RESOLUTION_REF
+        FROM FIN_AIWH.META.DRIFT_EVENT
+        WHERE STATUS IN ('OPEN', 'ESCALATED') AND SEVERITY = 'BREAKING'
+        ORDER BY DATASET_KEY, OBJECT_NAME
+        """,
+    )
+
+
+def publish_shield(sh, issue_url: str | None, impact_md: str | None, base: str | None = None) -> str:
+    """Branch from origin, write the staging model and any tests, open a PR. Never auto merges."""
+    from .shield import pr_body, pr_title
+    assert sh.ok
+    _ensure_clean_tree()
+    _ensure_labels()
+    subprocess.run(["gh", "label", "create", "shield", "--color", "5319E7",
+                    "--description", "restores contracted shape over breaking drift", "--force"],
+                   cwd=ROOT, capture_output=True, text=True)
+    base = base or _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    existing = existing_pr(sh.branch)
+    if existing:
+        return existing
+    _run(["git", "fetch", "-q", "origin", base])
+    try:
+        _run(["git", "checkout", "-q", "-b", sh.branch, f"origin/{base}"])
+        sh.staging_path.write_text(sh.staging_after)
+        files = [str(sh.staging_path.relative_to(ROOT))]
+        for path, sql in sh.test_files().items():
+            path.write_text(sql)
+            files.append(str(path.relative_to(ROOT)))
+        _run(["git", "add", *files])
+        body = pr_body(sh, issue_url, impact_md)
+        _run(["git", "commit", "-q", "-m", pr_title(sh), "-m", body])
+        _run(["git", "push", "-q", "-u", "origin", sh.branch])
+        url = _run([
+            "gh", "pr", "create", "--title", pr_title(sh), "--body", body,
+            "--base", base, "--head", sh.branch,
+            "--label", "drift", "--label", "breaking", "--label", "shield",
+        ]).splitlines()[-1]
+        if issue_url:
+            subprocess.run(
+                ["gh", "issue", "comment", issue_url, "--body",
+                 f"Shield proposed: {url}\n\nKeeps the reports correct while this is fixed. "
+                 f"Remove it when this issue closes."],
+                cwd=ROOT, capture_output=True, text=True,
+            )
+        return url
+    finally:
+        _run(["git", "checkout", "-q", base])
