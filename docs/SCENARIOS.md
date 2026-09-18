@@ -33,16 +33,15 @@ artifact that proves it happened.
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
 | 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** | PR #1 closed, **PR #7 merged** `99760b0` |
 | 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Passed** | PR #8 merged `de7e079`, PR #9 merged `1756b39` |
-| 09 | Duplicate key | one `AP_INVOICE` row duplicated | `DUPLICATE_KEY` / BREAKING | **Built, not merged** | issue expected, schema detection sees nothing |
-| 10 | Stale source | `AR_RECEIPT.LOADED_AT` set 3 days back | `STALE` / MEDIUM | **Built, not merged** | issue expected |
-| 11 | Content repaired | 09 and 10 fixed at source | breaches clear | **Built, not merged** | agent closes both issues |
+| 09 | Duplicate key | one `AP_INVOICE` row duplicated | `DUPLICATE_KEY` / BREAKING | **Passed** | issue #11, opened and closed by the agent |
+| 10 | Stale source | `AR_RECEIPT.LOADED_AT` set 3 days back | `STALE` / MEDIUM | **Passed** | issue #12, opened and closed by the agent |
+| 11 | Content repaired | 09 and 10 fixed at source | breaches clear | **Passed** | both issues closed on the next `agent` run, no click |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
 
-11 scenario scripts, all re-runnable. Eight fired live and resolved end to end.
-Three content scenarios are built and await their live run. 3 further rules
-covered by unit test with no live script.
+11 scenario scripts, all re-runnable, all fired live, all resolved end to end.
+3 further rules covered by unit test with no live script.
 
 ---
 
@@ -204,7 +203,7 @@ break → escalate → shield → repair → retire → close.
 
 ---
 
-### 09, 10, 11 — Content breaches · **Built, not merged**
+### 09, 10, 11 — Content breaches · **Passed**
 
 The first eight scenarios change the **shape** of a table. These change its
 **contents** and leave the shape alone, so schema detection is blind to all
@@ -234,8 +233,26 @@ DMF in `ops/20_quality.sql`.
 content breaches never reach the drafting path. They become an issue, and the
 issue closes itself when the measurement is back inside the contract.
 
-**Not yet done.** `ops/20_quality.sql` as ACCOUNTADMIN, then the three
-scenarios live.
+**Fired live.** On the breach, `agent` opened issue #11 (`Data breaches
+contract: RAW.AP_INVOICE`) and issue #12 (`RAW.AR_RECEIPT`), both labelled
+`quality`, no pull request. After scenario 11:
+
+```
+RAW.AP_INVOICE  DUPLICATE_KEY on INVOICE_ID cleared
+  closed https://github.com/manojnayakgit/fin_aiwh/issues/11
+RAW.AR_RECEIPT  STALE on LOADED_AT cleared
+  closed https://github.com/manojnayakgit/fin_aiwh/issues/12
+no open drift, nothing to do
+```
+
+Both closed by the agent, both events dismissed, no click.
+
+**What it took to get here.** Snowflake's DMFs refused, in order: a
+non-deterministic function body, a BOOLEAN argument, that argument cast to
+text, cast to number, a concatenated composite key, and the same key bound to
+an exact declared width. The last one gave the rule away: a DMF argument is a
+column reference and nothing else. Two custom DMFs remain, each taking a bare
+column; composite keys are counted by plain SQL. Section 4 has the detail.
 
 ---
 
@@ -441,6 +458,15 @@ merged, producing an identical file and an empty commit. It consulted the event
 table, which says what was true when the event was raised, instead of the live
 schema, which says what is true now. Both the "already installed" and the
 "no longer diverges" cases are now skipped, with a reason printed.
+
+→ Six attempts to get a DMF to accept something other than a bare column,
+before recognising that it never would. Types were never the problem.
+
+→ `load` truncated a table before discovering the seed could not fill it.
+
+→ `EVENT_ID` was the fingerprint, so a divergence re-raised after dismissal
+shared a row identity with its earlier lifecycle and every status update moved
+both.
 
 → `test_all_contracts_parse` asserted `len(contracts) == 8`. The first
 successful onboarding PR added a ninth and failed the gate. A test that breaks

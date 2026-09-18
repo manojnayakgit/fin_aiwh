@@ -1176,3 +1176,19 @@ So two custom DMFs remain, freshness on NTZ and nulls in a BOOLEAN, both taking
 a bare column. A composite key is counted by plain SQL in the same statement.
 The control plane never cared which function produced the number. Should have
 seen it two attempts earlier.
+
+
+---
+
+## Content governance closed on the live warehouse
+
+A duplicated invoice and a feed three days behind. Schema detection saw
+nothing, which is right: the shape was untouched. The content checks saw both.
+The agent opened issue #11 and issue #12, labelled `quality`, and proposed no
+pull request, because no contract change makes bad data good. After the
+source was repaired, the next `agent` run re-measured, found both inside the
+contract, closed both issues with a comment and dismissed both events.
+
+Eleven scenarios. Shape and content. Every one fired against Snowflake and
+every one resolved by the system, with no human step other than clicking Merge
+on a pull request the system wrote.

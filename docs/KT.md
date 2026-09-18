@@ -681,8 +681,8 @@ nothing to do and exits clean.
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |
-| Content governance | Built and unit tested on the derivation and verdict rules. DMFs confirmed available on the account. Not yet fired live |
-| Console, sync, scheduled cycle, 144 tests | Done |
+| Content governance | Proven live. Duplicate key and stale table each raised an issue, no PR; both issues closed by the agent on repair |
+| Console, sync, scheduled cycle, 145 tests | Done |
 
 ### Not done
 
@@ -711,7 +711,6 @@ nothing to do and exits clean.
 | 2 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
 | 3 | Staged contract change after a shield | For a column that is never coming back. Retirement covers the case where upstream repairs it |
-| 3 | Content governance, live | Built. Run `ops/20_quality.sql`, then scenarios 09 to 11 |
 | 3 | Reset generated from contracts | `99_reset` hard-codes the v1 shape and is now wrong. `ddl_type()` already turns a contract column into DDL; a `reset` command should build every table from its contract |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
