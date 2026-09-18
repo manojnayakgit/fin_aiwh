@@ -394,6 +394,16 @@ Live: `OPEN`, `PROPOSED`, `ESCALATED`. The detector will not re-raise a
 divergence while one exists. Finished: `MERGED`, `DISMISSED`. A reappearance
 after those is new.
 
+| Column | Meaning |
+|---|---|
+| `FINGERPRINT` | what the event is about: `sha256(dataset, change, object, after)`. Repeats across lifecycles. The dedupe key |
+| `EVENT_ID` | one raise: `sha256(fingerprint, run_id)`. Never repeats. What every status update targets |
+
+They were one column once. A dismissed divergence re-raised got the same id,
+Snowflake does not enforce primary keys, and every status update moved every
+lifecycle together. `ops/sql/04_event_identity.sql` separates them and repairs
+existing rows.
+
 ---
 
 ## 5. Classification rules
@@ -671,7 +681,7 @@ nothing to do and exits clean.
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |
 | Content governance | Built and unit tested on the derivation and verdict rules. DMFs confirmed available on the account. Not yet fired live |
-| Console, sync, scheduled cycle, 134 tests | Done |
+| Console, sync, scheduled cycle, 144 tests | Done |
 
 ### Not done
 
@@ -719,7 +729,8 @@ contained. Verification does not trust the draft either way.
 | `gh pr create` fails with no visible reason | Older `_run` hid the subprocess output | Fixed. Failures now print what the command said |
 | `git commit failed: nothing to commit` on a shield | The shield was already merged, or the drift is gone | Fixed. The agent skips both cases and says which |
 | `load` says `skipped: table has NOT NULL columns with no default that the seed does not carry` | The table moved past the v1 seed (scenario 02 added `REVENUE_STREAM` NOT NULL) | Nothing was truncated. Either adopt the column so the seed can be regenerated, or leave that table's data as it is |
-| `Invalid argument types for function 'NULL_COUNT'` | A NOT NULL BOOLEAN column | Fixed. Measured through a cast, not attached |
+| `Invalid argument types for function 'NULL_COUNT'` | A NOT NULL BOOLEAN column | Fixed. Measured through a cast to `NUMBER(1,0)`, not attached |
+| `sync` lists the same event several times | Pre-`04_event_identity` rows sharing an `EVENT_ID` | Run `ops/sql/04_event_identity.sql` once |
 
 
 | Symptom | Fix |

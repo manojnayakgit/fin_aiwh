@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS FIN_AIWH.META.OBSERVED_SCHEMA (
 
 -- Every divergence between contract and reality, classified and triaged.
 CREATE TABLE IF NOT EXISTS FIN_AIWH.META.DRIFT_EVENT (
-    EVENT_ID          VARCHAR      NOT NULL,
+    EVENT_ID          VARCHAR      NOT NULL,   -- unique per raise
+    FINGERPRINT       VARCHAR(32),             -- what it is about; repeats across lifecycles
     RUN_ID            VARCHAR      NOT NULL,
     DETECTED_AT       TIMESTAMP_NTZ NOT NULL DEFAULT SYSDATE(),
     DATASET_KEY       VARCHAR      NOT NULL,

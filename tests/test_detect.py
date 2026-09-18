@@ -160,8 +160,9 @@ class FakeConn:
 
 def _wire(monkeypatch, conn):
     from control import detect as d
+    # The live rows now carry both: the fingerprint (what) and a per-raise id.
     monkeypatch.setattr(d, "query", lambda c, sql, p=None: [
-        {"EVENT_ID": i} for i in c.active_ids])
+        {"FINGERPRINT": i, "EVENT_ID": f"live-{i[:8]}"} for i in c.active_ids])
     monkeypatch.setattr(d, "execute", lambda c, sql, p=None: c.inserted.append(p))
 
 
@@ -216,5 +217,36 @@ def test_a_suppressed_finding_still_gets_its_impact_refreshed(monkeypatch, contr
     assert (written, suppressed) == (0, 1)
     assert len(conn.inserted) == 1, "expected exactly one statement: the impact refresh"
     stmt = conn.inserted[0]
-    assert stmt["event_id"] == findings[0].fingerprint()
+    # the refresh targets the live row's own id, never the fingerprint
+    assert stmt["event_id"] == f"live-{findings[0].fingerprint()[:8]}"
     assert "fct_ap_open_items" in stmt["impact"]
+
+
+
+def test_re_raising_a_dismissed_divergence_gets_a_new_event_id(monkeypatch, contract):
+    """Regression: EVENT_ID used to be the fingerprint, so a divergence dismissed
+    and later re-raised produced two rows with one id, and every status update
+    moved both. Identity is per raise; the fingerprint is what repeats."""
+    from control.detect import event_id, persist
+    findings = _one_finding(contract)
+    fp = findings[0].fingerprint()
+    conn = FakeConn(active_ids=[])          # the old one is DISMISSED, so not active
+    _wire(monkeypatch, conn)
+    persist(conn, "run-a", findings, [contract])
+    persist(conn, "run-b", findings, [contract])
+    ids = [r["event_id"] for r in conn.inserted]
+    assert ids[0] != ids[1]
+    assert all(r["fingerprint"] == fp for r in conn.inserted)
+    assert ids[0] == event_id(fp, "run-a")
+
+
+def test_refreshing_impact_targets_the_live_row_not_the_fingerprint(monkeypatch, contract):
+    from control.detect import persist
+    from control.lineage import Impact
+    findings = _one_finding(contract)
+    findings[0].impact = Impact("RAW.AP_INVOICE", "NEW_COL", marts=["m"])
+    fp = findings[0].fingerprint()
+    conn = FakeConn(active_ids=[fp])
+    _wire(monkeypatch, conn)
+    persist(conn, "run-c", findings, [contract])
+    assert conn.inserted[0]["event_id"] == f"live-{fp[:8]}"

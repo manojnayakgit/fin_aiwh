@@ -161,6 +161,6 @@ def test_boolean_not_null_is_measured_through_a_cast_and_not_attached():
                           ContractColumn("IS_ACTIVE", "BOOLEAN", False)],
                  primary_key=["VENDOR_ID"], freshness={})
     nulls = {x.columns[0]: x for x in desired(c) if x.change_type == "NULL_IN_REQUIRED"}
-    assert "CAST(IS_ACTIVE AS VARCHAR)" in nulls["IS_ACTIVE"].sql()
+    assert "CAST(IS_ACTIVE AS NUMBER(1,0))" in nulls["IS_ACTIVE"].sql()
     assert not nulls["IS_ACTIVE"].attachable
     assert "CAST" not in nulls["VENDOR_ID"].sql() and nulls["VENDOR_ID"].attachable

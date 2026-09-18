@@ -301,13 +301,19 @@ def attach_impact(findings: list[Finding], lineage: Lineage | None = None) -> li
 ACTIVE_STATUSES = ("OPEN", "PROPOSED", "ESCALATED")
 
 
-def active_fingerprints(conn) -> set[str]:
+def active_fingerprints(conn) -> dict[str, str]:
+    """fingerprint -> EVENT_ID for every event still in a live state."""
     rows = query(
         conn,
-        "SELECT EVENT_ID FROM FIN_AIWH.META.DRIFT_EVENT WHERE STATUS IN (%s)"
+        "SELECT FINGERPRINT, EVENT_ID FROM FIN_AIWH.META.DRIFT_EVENT WHERE STATUS IN (%s)"
         % ",".join(f"'{s}'" for s in ACTIVE_STATUSES),
     )
-    return {r["EVENT_ID"] for r in rows}
+    return {r["FINGERPRINT"]: r["EVENT_ID"] for r in rows}
+
+
+def event_id(fingerprint: str, run_id: str) -> str:
+    """Unique per raise. The fingerprint says what; the run says when."""
+    return hashlib.sha256(f"{fingerprint}:{run_id}".encode()).hexdigest()[:32]
 
 
 def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract]) -> tuple[int, int]:
@@ -331,7 +337,7 @@ def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract
                     conn,
                     "UPDATE FIN_AIWH.META.DRIFT_EVENT SET IMPACT = TRY_PARSE_JSON(%(impact)s) "
                     "WHERE EVENT_ID = %(event_id)s",
-                    {"impact": json.dumps(f.impact.as_dict()), "event_id": fp},
+                    {"impact": json.dumps(f.impact.as_dict()), "event_id": already[fp]},
                 )
             suppressed += 1
             continue
@@ -339,16 +345,17 @@ def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract
             conn,
             """
             INSERT INTO META.DRIFT_EVENT
-              (EVENT_ID, RUN_ID, DATASET_KEY, CONTRACT_VERSION, CHANGE_TYPE,
+              (EVENT_ID, FINGERPRINT, RUN_ID, DATASET_KEY, CONTRACT_VERSION, CHANGE_TYPE,
                SEVERITY, OBJECT_NAME, BEFORE_STATE, AFTER_STATE, RATIONALE, STATUS,
                IMPACT)
-            SELECT %(event_id)s, %(run_id)s, %(dataset)s, %(version)s, %(change_type)s,
+            SELECT %(event_id)s, %(fingerprint)s, %(run_id)s, %(dataset)s, %(version)s, %(change_type)s,
                    %(severity)s, %(object_name)s,
                    TRY_PARSE_JSON(%(before)s), TRY_PARSE_JSON(%(after)s),
                    %(rationale)s, 'OPEN', TRY_PARSE_JSON(%(impact)s)
             """,
             {
-                "event_id": fp,
+                "event_id": event_id(fp, run_id),
+                "fingerprint": fp,
                 "run_id": run_id,
                 "dataset": f.dataset_key,
                 "version": versions.get(f.dataset_key),

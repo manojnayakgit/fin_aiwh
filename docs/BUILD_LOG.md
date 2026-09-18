@@ -1131,3 +1131,32 @@ the contracts, which is the only way it cannot fall behind them.
 
 Also: `NULL_COUNT` refuses BOOLEAN. `IS_ACTIVE` is measured through a cast to
 text, which changes nothing about whether it is null, and is not attached.
+
+
+---
+
+## One key was doing two jobs
+
+`sync` printed `RAW.AR_INVOICE.REVENUE_STREAM  PROPOSED still` three times.
+One divergence, three rows, all in the same state.
+
+`EVENT_ID` was the fingerprint: `sha256(dataset, change, object, after)`. That
+is deliberately deterministic so the detector can recognise a divergence it
+has already raised. It was also the row identity. `REVENUE_STREAM` had been
+raised, escalated with the AR_INVOICE bundle, dismissed when issue #4 closed,
+re-raised, proposed. Each raise inserted a row with the same id, because
+Snowflake does not enforce primary keys. Each status update was `WHERE
+EVENT_ID = ...`, so it moved every lifecycle at once.
+
+Dedupe needs a key that repeats. Identity needs one that never does. They are
+two columns now: `FINGERPRINT` for what, `EVENT_ID` per raise. A migration
+gives the older duplicates their own ids and puts them back to DISMISSED,
+which is where they were before a later lifecycle swept them along.
+
+The system had run correctly through eight scenarios with this bug in it. It
+only shows when a divergence goes through a second lifecycle, and nothing did
+until the repair scenario closed an issue that a MEDIUM had been riding along
+in.
+
+Also: `NULL_COUNT` refuses unbounded VARCHAR as well as BOOLEAN. The cast is
+to `NUMBER(1,0)` now, which the probe proved.

@@ -54,10 +54,11 @@ QUALITY_TYPES = {"DUPLICATE_KEY", "NULL_IN_REQUIRED", "STALE", "EXPECTATION_BREA
 
 
 # System DMFs refuse some types. NULL_COUNT on a BOOLEAN is the one that bites
-# here (AP_VENDOR.IS_ACTIVE). For the synchronous call the column is cast to
-# text, which changes nothing about whether it is null. Attaching cannot cast,
-# so such checks are measured but not attached.
-CAST_FOR_DMF = {"BOOLEAN": "VARCHAR"}
+# here (AP_VENDOR.IS_ACTIVE), and it refuses unbounded VARCHAR too, so the cast
+# is to NUMBER(1,0), which the probe proved. TRUE, FALSE and NULL map to 1, 0
+# and NULL: nothing about nullness changes. Attaching cannot cast, so such
+# checks are measured but not attached.
+CAST_FOR_DMF = {"BOOLEAN": "NUMBER(1,0)"}
 
 
 @dataclass(frozen=True)
