@@ -622,7 +622,7 @@ python -m pytest tests -q
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
-| Shield retirement | Fired live: both stale shields detected, PR #8 and PR #9 opened, issues commented. Awaiting merge |
+| Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |
 | Console, sync, scheduled cycle, 120 tests | Done |
 
 ### Not done

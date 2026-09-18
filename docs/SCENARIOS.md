@@ -32,14 +32,13 @@ artifact that proves it happened.
 | 05 | Column dropped | `AP_PAYMENT.BANK_REF` removed | `COLUMN_REMOVED` / BREAKING | **Passed** | issue #3, shield PR #5, merged `72485a8` |
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
 | 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** | PR #1 closed, **PR #7 merged** `99760b0` |
-| 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Built, not merged** | retirement **PR #8**, **PR #9** open |
+| 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Passed** | PR #8 merged `de7e079`, PR #9 merged `1756b39` |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
 
-8 scenario scripts, all re-runnable. Seven fired live and resolved or shielded
-end to end. The eighth, the repair, is built and verified locally and awaits its
-live run. 3 further rules covered by unit test with no live script.
+8 scenario scripts, all re-runnable, all fired live, all resolved end to end.
+3 further rules covered by unit test with no live script.
 
 ---
 
@@ -148,7 +147,7 @@ one coherent change instead of two competing branches on the same contract.
 
 ---
 
-### 08 — Upstream repaired · **Built, not merged**
+### 08 — Upstream repaired · **Passed**
 
 **Change.** The source team puts `BANK_REF` back on `AP_PAYMENT` and restores
 NOT NULL on `AR_INVOICE.STATUS`. Nothing else is touched: `AP_ACCRUAL` is now
@@ -190,7 +189,10 @@ the same source retirement uses
 → shields never checked whether they were already installed, so any rerun after
 a shield merged would have hit the same wall. That bug predates scenario 08.
 
-**Not yet done.** Merging PR #8 and PR #9, then `sync` to dismiss the events.
+**Merged.** PR #8 `de7e079` and PR #9 `1756b39`. Both staging models are back
+to their plain selects, the guard test is gone, and the `Closes` lines closed
+issues #3 and #4 on merge. The BREAKING path is now proven in both directions:
+break → escalate → shield → repair → retire → close.
 
 ---
 
@@ -413,9 +415,9 @@ As of the last `sync`, four events open or escalated:
 | Dataset | Column | Status | Scenario |
 |---|---|---|---|
 | `RAW.AP_ACCRUAL` | (dataset) | PROPOSED → MERGED after `sync` | 07, PR #7 merged |
-| `RAW.AP_PAYMENT` | `BANK_REF` | ESCALATED | 05, issue #3 open, shielded |
-| `RAW.AR_INVOICE` | `REVENUE_STREAM` | ESCALATED | 02, with the bundle |
-| `RAW.AR_INVOICE` | `STATUS` | ESCALATED | 06, issue #4 open, shielded |
+| `RAW.AP_PAYMENT` | `BANK_REF` | ESCALATED → DISMISSED after `sync` | 05 repaired by 08, issue #3 closed |
+| `RAW.AR_INVOICE` | `REVENUE_STREAM` | ESCALATED | 02, still a MEDIUM to adopt |
+| `RAW.AR_INVOICE` | `STATUS` | ESCALATED → DISMISSED after `sync` | 06 repaired by 08, issue #4 closed |
 
 Escalated drift stays open on purpose. A shield keeps the reports correct while
 the source is fixed, and hides nothing from the control plane.
