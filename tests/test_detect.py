@@ -200,3 +200,21 @@ def test_active_statuses_cover_every_live_workflow_state():
     from control.detect import ACTIVE_STATUSES
     assert set(ACTIVE_STATUSES) == {"OPEN", "PROPOSED", "ESCALATED"}
     assert "DISMISSED" not in ACTIVE_STATUSES and "MERGED" not in ACTIVE_STATUSES
+
+
+def test_a_suppressed_finding_still_gets_its_impact_refreshed(monkeypatch, contract):
+    """An event open for a week must report what it breaks today."""
+    from control.detect import persist
+    from control.lineage import Impact
+
+    findings = _one_finding(contract)
+    findings[0].impact = Impact("RAW.AP_INVOICE", "NEW_COL", marts=["fct_ap_open_items"])
+    conn = FakeConn(active_ids=[findings[0].fingerprint()])
+    _wire(monkeypatch, conn)
+
+    written, suppressed = persist(conn, "run3", findings, [contract])
+    assert (written, suppressed) == (0, 1)
+    assert len(conn.inserted) == 1, "expected exactly one statement: the impact refresh"
+    stmt = conn.inserted[0]
+    assert stmt["event_id"] == findings[0].fingerprint()
+    assert "fct_ap_open_items" in stmt["impact"]

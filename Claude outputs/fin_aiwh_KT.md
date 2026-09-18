@@ -1,492 +1,342 @@
 # fin_aiwh — Knowledge Transfer
 
-AI enabled finance data warehouse for AP and AR subledger data.
-Contract-first governance with an AI agent that proposes changes and a CI gate
-that decides whether they ship.
+AI enabled finance warehouse for AP/AR subledger data. Contract-first
+governance, an AI agent that proposes changes, a CI gate that decides if they
+ship.
 
 | | |
 |---|---|
 | Repo | https://github.com/manojnayakgit/fin_aiwh |
 | Warehouse | Snowflake, database `FIN_AIWH` |
 | Status | Working proof of concept, verified end to end on a live account |
-| Audience | A data engineer joining the project, and the stakeholders funding it |
+| For | Engineers joining the project, and stakeholders funding it |
 
 ---
 
-## 1. What we are building, and why
+## 1. The problem and the approach
 
-A finance function's warehouse breaks quietly. An upstream ERP team adds a
-column, widens a field, or changes a decimal place, tells nobody, and the
-monthly pack is wrong for three weeks before anyone notices. The engineering
-cost is not the fix, it is the investigation.
+**Problem.** Upstream ERP teams change table shapes without telling anyone. The
+monthly pack is wrong for weeks before anyone notices. The cost is the
+investigation, not the fix.
 
-Most tools on the market fingerprint your tables and alert when a fingerprint
-changes. That answers *did something change*. Nobody in finance is asking that.
-They are asking **is anything we report now wrong, and who agreed to it**.
+**Why not schema drift tools.** They fingerprint tables and alert on change.
+That answers *did something change*. Finance asks *is anything we report wrong,
+and who agreed to it*.
 
-So this system works differently:
+**Approach.**
 
-→ Every source dataset has a **contract** in version control: columns, types,
-  nullability, keys, owner. It is the agreement, not a description.
-→ The warehouse is compared **against the contract**, not against its own past.
-→ Every divergence is classified by **what it breaks**, not by how unusual it looks.
-→ An **AI agent** drafts the contract change. Deterministic code decides whether
-  the draft is correct. A **CI gate** decides whether it ships.
+| Principle | Meaning |
+|---|---|
+| Contract first | Every source dataset has a YAML contract in git: columns, types, nullability, keys, owner. It is the agreement, not a description |
+| Compare to contract | The warehouse is judged against the contract, never against its own past |
+| Classify by consequence | Divergence is graded by what it breaks, not how unusual it looks |
+| AI drafts, code decides | Claude proposes the contract change. Deterministic code verifies it. CI gates it |
 
-The outcome we are aiming at is not drift alerts. It is removing the routine
-half of data engineering: when upstream makes a safe change, the system adopts
-it without a human; when upstream makes a dangerous one, the system stops the
-release and says why in plain language.
+**Goal.** Remove the routine half of data engineering. Safe upstream changes
+are adopted with no human. Dangerous ones stop the release with a plain
+language reason.
 
-### Severity is the whole design
+### Severity
 
-| Level | Meaning | What happens |
+| Level | Meaning | Action |
 |---|---|---|
-| `LOW` | Additive. Nothing downstream is wrong. | Agent opens a PR, auto merges once CI is green. |
-| `MEDIUM` | Needs a decision. Nothing is broken yet. | Agent opens a PR with a recommendation. A human decides. |
-| `BREAKING` | Something is already wrong, or about to be. | No PR. A GitHub issue with evidence. Release gate fails. |
+| `LOW` | Additive, nothing downstream is wrong | PR opened, auto merges when CI is green |
+| `MEDIUM` | Needs a decision, nothing broken yet | PR opened with a recommendation, human decides |
+| `BREAKING` | Something is already wrong or about to be | No PR. GitHub issue with evidence. Gate fails |
 
-**The example to use with stakeholders.** A monetary column moves from
-`NUMBER(18,2)` to `NUMBER(18,4)`. Nothing errors. No pipeline fails. dbt builds
-green. Every total just stops agreeing with the subledger by a rounding margin
-that compounds across a million invoices. This system classifies it `BREAKING`
-and blocks the release. A fingerprint diff would have logged "type changed" and
-moved on.
+**The example for stakeholders.** A money column moves from `NUMBER(18,2)` to
+`NUMBER(18,4)`. Nothing errors. dbt builds green. Every total drifts from the
+subledger by a rounding margin that compounds over a million invoices. This
+system says `BREAKING` and blocks the release. A fingerprint diff logs "type
+changed" and moves on.
 
 ---
 
 ## 2. Architecture
 
 ```
-  UPSTREAM ERP
-       │  (lands data, changes shape without warning)
+  UPSTREAM ERP  (changes shape without warning)
+       │
        ▼
 ┌──────────────────────────────────────────────────────────────┐
 │ SNOWFLAKE  FIN_AIWH                                          │
-│                                                              │
-│  RAW ──────► STAGING ──────► MARTS        META               │
-│  8 source    8 views         5 tables     control plane      │
-│  tables                      AP/AR aging  contracts, events, │
-│                              DSO/DPO      observed schema,   │
-│                                           run log            │
-│              └──── dbt, mart contracts enforced ────┘        │
+│  RAW ──► STAGING ──► MARTS          META                     │
+│  8 tables  8 views   5 tables       contracts, drift events, │
+│                      AP/AR aging    observed schema, run log │
+│                      DSO/DPO                                 │
+│            └── dbt, mart contracts enforced ──┘              │
 └──────────────────────────────────────────────────────────────┘
-       ▲                              │
-       │ reads INFORMATION_SCHEMA     │ writes classified events
-       │                              ▼
+       ▲ reads INFORMATION_SCHEMA         │ writes events
+       │                                  ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ CONTROL PLANE   python -m control.cli   (runs outside SF)    │
-│                                                              │
-│  detect ──► classify ──► agent ──► verify ──► PR / issue     │
-│                            │         ▲                       │
-│                       Claude API   same rules that           │
-│                       drafts       raised the event          │
+│ CONTROL PLANE   python -m control.cli   (outside Snowflake)  │
+│  detect ─► classify ─► impact ─► agent ─► verify ─► publish  │
+│                                    │        ▲                │
+│                               Claude API   same rules that   │
+│                               drafts       raised the event  │
 └──────────────────────────────────────────────────────────────┘
        │                                          │
        ▼                                          ▼
   contracts/raw/*.yml                     GITHUB
-  the agreement of record                 PR ──► gate ──► merge
+  agreement of record                     PR ─► gate ─► merge
                                           issue for BREAKING
 ```
 
-**Why the control plane sits outside Snowflake.** Governance that lives inside
-the warehouse is owned by the warehouse vendor. Contracts, classification rules
-and the audit trail are portable Python and YAML. Snowflake can be replaced
-without renegotiating what the data is allowed to be.
-
-**Why the model drafts but does not decide.** Claude proposes; deterministic
-code judges the proposal against the same rules that raised the event, and a CI
-gate decides whether it ships. The AI sits inside the loop, not in charge of it.
-Section 3.4 has the mechanics.
-
+| Decision | Reason |
+|---|---|
+| Control plane outside Snowflake | Governance that lives in the warehouse is owned by the vendor. Contracts, rules and audit trail are portable Python and YAML |
+| Model drafts, does not decide | The proposal is verified by the same rules that raised the event, then gated by CI. The AI is inside the loop, not in charge of it |
+| Contracts in git | Every change is a reviewed pull request with history |
 
 ---
 
-## 3. How it works
+## 3. Tools
 
-Four mechanisms. Read this section and you can change the system safely.
+| Tool | Used for | Where |
+|---|---|---|
+| Snowflake | Warehouse and control plane tables | `FIN_AIWH.{RAW,STAGING,MARTS,META,CI}` |
+| dbt-snowflake | Transformation, tests, enforced mart contracts | `dbt/` |
+| Python 3.11 | Detection, classification, agent, console | `control/` |
+| Claude API | Drafting contract changes. Nothing else | `control/agent.py` |
+| GitHub | Contracts under review. PRs and issues are the work queue | `contracts/` |
+| GitHub Actions | Release gate | `.github/workflows/ci.yml` |
+| pytest | 62 tests, no warehouse or API needed | `tests/` |
 
-### 3.1 A contract
+Model: `claude-sonnet-4-5`, override with `ANTHROPIC_MODEL`. Only the agent
+calls it. Everything else is deterministic.
 
-`contracts/raw/ap_payment.yml`, trimmed:
+---
+
+## 4. How it works
+
+### 4.1 A contract
 
 ```yaml
 dataset: RAW.AP_PAYMENT
 version: 1
 owner: finance-data-engineering
 classification: financial-restricted
-primary_key:
-  - PAYMENT_ID
-freshness:
-  column: LOADED_AT
-  max_lag_hours: 24
+primary_key: [PAYMENT_ID]
+freshness: {column: LOADED_AT, max_lag_hours: 24}
 columns:
-  - name: PAYMENT_ID
-    type: TEXT          # as Snowflake INFORMATION_SCHEMA reports it, not as DDL writes it
-    length: 32
-    nullable: false
-    description: Surrogate payment key.
-  - name: PAID_AMOUNT
-    type: NUMBER
-    precision: 18
-    scale: 2
-    nullable: false
+  - {name: PAYMENT_ID,  type: TEXT,   length: 32,                nullable: false}
+  - {name: PAID_AMOUNT, type: NUMBER, precision: 18, scale: 2,   nullable: false}
 ```
 
-**Why types are written the way `INFORMATION_SCHEMA` reports them.** A column
-declared `VARCHAR(32)` in DDL comes back as `DATA_TYPE = 'TEXT'` with
-`CHARACTER_MAXIMUM_LENGTH = 32`. Writing the contract in Snowflake's reporting
-vocabulary means comparison is a direct field match with no translation layer
-to get wrong. `seeds/emit.py` does this mapping once, at bootstrap, when it
-generates both the RAW DDL and the v1 contracts from one spec.
+Types use Snowflake's `INFORMATION_SCHEMA` vocabulary (`TEXT` not `VARCHAR`),
+so comparison is a direct field match with no translation layer.
+`seeds/emit.py` generates the v1 contracts and the RAW DDL from one spec.
 
-Parsed by `control/contracts.py` into a `Contract` object. Parsing rejects
-duplicate columns and a `primary_key` naming a column that does not exist.
-
-### 3.2 Detection, step by step
+### 4.2 Detection
 
 `python -m control.cli detect` → `control/detect.py`
 
-**Step 1. Read what the warehouse actually holds.**
+| Step | What | Detail |
+|---|---|---|
+| 1 Observe | One query on `INFORMATION_SCHEMA.COLUMNS` for schema `RAW` | No table scans. Returns type, length, precision, scale, nullability per column |
+| 2 Snapshot | Write every column to `META.OBSERVED_SCHEMA` with a run id | Evidence for "what did it look like on the 3rd" |
+| 3 Diff | For each contract: compare every declared column, then flag undeclared ones | Then any RAW table with no contract → `DATASET_UNGOVERNED` |
+| 4 Classify | Each divergence gets a severity and a one sentence reason written for a finance reader | Rules table in section 5 |
+| 5 Impact | Attach what it breaks downstream, from dbt lineage | Section 4.6 |
+| 6 Fingerprint | `sha256(dataset, change_type, object, after_state)[:32]` | Same divergence, same id. The idempotency key |
+| 7 Persist | Insert only fingerprints not already `OPEN`, `PROPOSED` or `ESCALATED` | A scheduled run never opens a duplicate issue |
+| 8 Log | One row in `META.RUN_LOG`, even when nothing was found | A quiet run is still proof |
 
-```sql
-SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE,
-       IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE
-FROM   FIN_AIWH.INFORMATION_SCHEMA.COLUMNS
-WHERE  TABLE_SCHEMA = 'RAW'
-ORDER  BY TABLE_NAME, ORDINAL_POSITION
-```
+Type comparison:
 
-One query, no table scans. Each row becomes an `ObservedColumn`. The result is
-a dict: `{"RAW.AP_PAYMENT": {"PAYMENT_ID": ObservedColumn(...), ...}}`.
-
-**Step 2. Snapshot it.** Every row is written to `META.OBSERVED_SCHEMA` against
-a run id like `20260918T212712-893e161a`. This is the evidence. Six months from
-now you can answer "what did this table look like on the 3rd" without guessing.
-
-**Step 3. Diff, contract by contract.** `diff_all()` walks every registered
-contract and calls `diff_dataset(contract, observed_columns)`:
-
-```
-for each column the contract declares:
-    not present in the warehouse?        → COLUMN_REMOVED    (BREAKING)
-    present: compare type                → _compare_type()   (see table below)
-    present: compare nullability         → RELAXED / TIGHTENED
-
-for each column the warehouse has that the contract does not declare:
-    nullable?                            → COLUMN_ADDED      (LOW)
-    NOT NULL?                            → COLUMN_ADDED      (MEDIUM)
-
-contract exists but the table does not   → DATASET_MISSING   (BREAKING)
-```
-
-Then, after every contract is processed, any table in `RAW` with no contract at
-all becomes `DATASET_UNGOVERNED` (MEDIUM).
-
-`_compare_type()` is where the money is. Same base type is not enough:
-
-| Comparison | Result |
+| Contract → Live | Verdict |
 |---|---|
-| `TEXT` vs `NUMBER` | BREAKING, base type changed |
+| `TEXT` → `NUMBER` | BREAKING, base type |
 | `TEXT(32)` → `TEXT(64)` | LOW, widened |
 | `TEXT(64)` → `TEXT(32)` | BREAKING, narrowed |
 | `NUMBER(18,2)` → `NUMBER(18,4)` | BREAKING, scale moved |
 | `NUMBER(18,2)` → `NUMBER(38,2)` | LOW, precision widened |
 | `NUMBER(38,2)` → `NUMBER(18,2)` | BREAKING, precision narrowed |
 
-Each divergence becomes a `Finding` carrying the before state, the after state,
-the severity, and a sentence of reasoning written for a finance reader, not an
-engineer. That sentence is what appears in the PR, the issue and the console.
+Flags: `--fail-on-breaking` exits 2 (CI depends on this). `--dataset X` scopes
+both contracts and observed schema. `--dry-run` writes nothing.
 
-**Step 4. Fingerprint.** Every finding gets a stable id:
-
-```python
-sha256(json([dataset_key, change_type, object_name, after_state]))[:32]
-```
-
-The same divergence always produces the same fingerprint. A different one
-produces a different fingerprint. This is the idempotency key.
-
-**Step 5. Persist, but only what is new.** Before inserting, the detector reads
-every fingerprint already sitting in a live state:
-
-```sql
-SELECT EVENT_ID FROM FIN_AIWH.META.DRIFT_EVENT
-WHERE STATUS IN ('OPEN', 'PROPOSED', 'ESCALATED')
-```
-
-Anything matching is skipped and counted. This is why a detector on a schedule
-does not open a duplicate issue every run. The output says so explicitly:
-
-```
-run 20260918T212712-893e161a  scanned 9 datasets  found 4 divergences
-  new 0  already being worked on 4
-```
-
-**Step 6. Log the run** to `META.RUN_LOG`, including runs that found nothing.
-A quiet run is still proof the check happened.
-
-**Exit code.** With `--fail-on-breaking`, the command exits `2` when any finding
-is BREAKING. That is the single line CI depends on.
-
-**Scoping.** `--dataset RAW.AP_INVOICE` limits both the contracts considered and
-the observed schema, so a scoped run cannot report unrelated tables as
-ungoverned. The gate uses this.
-
-### 3.3 Registration
+### 4.3 Registration
 
 `python -m control.cli register` → `control/register.py`
 
-A contract file changing on disk means nothing. Registration is what makes it
-the agreement of record.
+A contract file changing on disk means nothing until registered.
 
-1. The contract is **canonicalised**: columns sorted by name, keys sorted,
-   defaults filled in. Formatting, comments and column order cannot change the
-   result.
-2. `sha256` of that canonical form is the **spec hash**.
-3. The hash is compared to `META.ACTIVE_CONTRACT` for that dataset.
-   → same hash: nothing happens
-   → different hash and `version` was not bumped: **refused**, with the
-     dataset named
-   → different hash and version bumped: a new row is inserted, carrying the
-     version, the hash, the full parsed spec as JSON, and the current git SHA
+| Step | What |
+|---|---|
+| Canonicalise | Sort columns and keys, fill defaults. Formatting and comments cannot change the result |
+| Hash | `sha256` of the canonical form |
+| Compare | Against `META.ACTIVE_CONTRACT` for that dataset |
+| Same hash | Nothing happens |
+| New hash, version not bumped | Refused, dataset named |
+| New hash, version bumped | New row: version, hash, full spec as JSON, git SHA |
 
-Nothing is ever updated or deleted. `ACTIVE_CONTRACT` is a view picking the
-highest version per dataset. A drift event raised in March can still be read
-against the contract that was in force in March.
+Append only. `ACTIVE_CONTRACT` is a view picking the highest version. A March
+event can still be read against the March contract.
 
-### 3.4 The agent
+### 4.4 Agent
 
 `python -m control.cli agent` → `control/agent.py`
 
-**Step 1. Bundle.** Open events are grouped by dataset. Routing is decided by
-the **worst** event in the group, because you cannot adopt half a dataset. A
-dataset with one MEDIUM and one BREAKING event escalates entirely.
-
-**Step 2. Route.**
-
-| Worst severity | Action |
+| Step | What |
 |---|---|
-| BREAKING | `gh issue create` with a table of the evidence. No PR, ever. Events → `ESCALATED` |
-| MEDIUM | draft → verify → PR, waits for a human. Events → `PROPOSED` |
-| LOW | draft → verify → PR, auto merge if the branch is protected. Events → `PROPOSED` |
+| Bundle | Group open events by dataset. Route on the **worst** event, because you cannot adopt half a dataset |
+| Route | BREAKING → issue, events `ESCALATED`. LOW or MEDIUM → draft, verify, PR, events `PROPOSED` |
+| Draft | Claude receives: events as JSON, live schema as JSON, current contract, current staging model, downstream impact. Replies through a **forced tool call** with a fixed schema: `contract_yaml`, `staging_sql`, `pr_title`, `pr_body`, `reasoning`. Structured data, nothing to parse |
+| Verify | Reject if: YAML fails to parse, dataset renamed, version ≠ old+1, any contracted column dropped, primary key changed, **proposal still diverges from live schema**, staging no longer reads `source('raw', ...)` |
+| Publish | Fetch, branch from `origin/main` (never local HEAD), write contract and optional staging model, commit, push, `gh pr create` with `drift` + severity labels |
+| Auto merge | Only if branch protection reports required status checks. Otherwise the agent says why it did not |
+| Mark | Events → `PROPOSED` or `ESCALATED`, URL stored in `RESOLUTION_REF` |
 
-**Step 3. Draft.** Claude receives, in one message:
+The verify step re-runs `diff_dataset()`, the function that raised the event,
+against the proposal. If the gap is not closed exactly, the draft is wrong by
+definition. Rejected drafts are printed and skipped. Nothing reaches git.
 
-→ the drift events as JSON, with severities and reasoning
-→ the live schema from `INFORMATION_SCHEMA` as JSON
-→ the current contract file verbatim
-→ the current dbt staging model, if one exists
+System prompt constraints: bump version by exactly one, describe live schema
+exactly, never remove a live column, keep existing descriptions, mark inferred
+descriptions as inferred, invent no business rules.
 
-and must reply through a **forced tool call** named `propose_contract_change`
-with a fixed schema: `contract_yaml`, `staging_sql` (or null), `pr_title`,
-`pr_body`, `reasoning`. Forcing the tool means the response is structured data.
-There is no prose to parse, no markdown fences to strip, no "here is your
-contract" preamble.
+### 4.5 Sync
 
-The system prompt constrains it: bump the version by exactly one, describe the
-live schema exactly, never remove a live column, keep existing descriptions,
-mark inferred descriptions as inferred, do not invent business rules.
-
-**Step 4. Verify. This is the important part.** The draft is not trusted.
-`verify()` rejects it if any of these hold:
-
-→ the YAML does not parse
-→ the dataset name changed
-→ the version is not exactly old + 1 (or 1 for a brand new dataset)
-→ any contracted column was dropped
-→ the primary key changed
-→ **the proposed contract still diverges from the live schema**
-→ the staging model no longer reads from `source('raw', ...)`
-
-That sixth check is the real guard. It re-runs `diff_dataset()` — the same
-function that raised the event in the first place — against the proposed
-contract. If the proposal does not close the gap completely, it is wrong by
-definition, not by opinion. A rejected proposal is printed and skipped. Nothing
-reaches git.
-
-**Step 5. Publish.** `git fetch origin`, branch **from `origin/<base>`** (never
-from local HEAD, or unpushed local commits get swept into the PR), write the
-contract file and optionally the staging model, commit, push, `gh pr create`
-with `drift` and severity labels.
-
-Auto merge is enabled only when `repos/{owner}/{repo}/branches/<base>/protection`
-reports required status check contexts. Without branch protection,
-`gh pr merge --auto` merges as soon as a PR is mergeable, which means the gate
-never runs. The agent detects this and says so rather than merging blind.
-
-**Step 6. Mark.** Events move to `PROPOSED` or `ESCALATED` with the PR or issue
-URL stored in `RESOLUTION_REF`.
-
-### 3.5 Closing the loop: sync
-
-`python -m control.cli sync` reads each `PROPOSED` or `ESCALATED` event's stored
-URL and asks GitHub what happened.
+`python -m control.cli sync` reads each `PROPOSED` or `ESCALATED` event's
+stored URL and asks GitHub what happened.
 
 | Reference | GitHub state | Event becomes |
 |---|---|---|
-| pull request | merged | `MERGED` |
-| pull request | closed, not merged | `OPEN` again |
-| pull request | open | unchanged |
-| issue | closed | `DISMISSED` |
-| issue | open | unchanged |
+| PR | merged | `MERGED` |
+| PR | closed, not merged | `OPEN` (the drift is still there) |
+| PR | open | unchanged |
+| Issue | closed | `DISMISSED` |
+| Issue | open | unchanged |
 
-The closed-without-merging case matters. Rejecting a proposed contract does not
-make the divergence go away, so the event returns to `OPEN` for triage instead
-of vanishing.
+Without `sync`, a merged PR leaves events `PROPOSED` forever and the detector
+stays silent about that dataset.
 
-Without `sync`, a merged PR would leave its events `PROPOSED` forever, and the
-detector would stay permanently silent about that dataset.
+### 4.6 Impact analysis
 
-### 3.6 The dbt layer
+`control/lineage.py`. Turns "BANK_REF dropped" into "BANK_REF dropped, breaks
+`fct_ap_open_items`, `agg_ap_aging`, `kpi_dso_dpo`".
 
-`RAW` → 8 staging views (trim, upper, coalesce tax, derive net amount) → 5 marts:
-
-| Model | What |
-|---|---|
-| `fct_ap_open_items` | one row per AP invoice, paid vs outstanding, USD, aging bucket |
-| `fct_ar_open_items` | same for AR |
-| `agg_ap_aging`, `agg_ar_aging` | by entity and bucket |
-| `kpi_dso_dpo` | DSO and DPO per entity, count back over trailing 90 days |
-
-The two fact models have **enforced dbt contracts**: the output shape is
-declared in `dbt/models/marts/marts.yml` and dbt refuses to build on mismatch.
-Every amount is cast explicitly (`::number(18,2)`) because Snowflake widens
-numeric types through arithmetic, and an uncast sum would arrive as
-`number(38,2)` and fail the contract.
-
-**A limitation worth understanding.** Those casts also mean the money-scale
-scenario builds green. The mart contract protects the *output* shape; it cannot
-know the *input* lost meaning. Only the source contract sees that. This is
-exactly why the control plane exists, and it is worth saying out loud so nobody
-assumes dbt is a second safety net for that class of change.
-
----
-
-## 4. Tools, and where each is used
-
-| Tool | Used for | Where |
+| Level | Source | Confidence |
 |---|---|---|
-| Snowflake | Warehouse, and the control plane's own tables | `FIN_AIWH.{RAW,STAGING,MARTS,META,CI}` |
-| dbt (dbt-snowflake) | Transformation, tests, enforced mart contracts | `dbt/` |
-| Python 3.11 | Control plane: detection, classification, agent, console | `control/` |
-| Claude API | Drafting contract changes only | `control/agent.py` |
-| GitHub | Contracts under review; PRs and issues are the work queue | `contracts/`, repo |
-| GitHub Actions | The release gate | `.github/workflows/ci.yml` |
-| pytest | Classification and agent rules, no warehouse needed | `tests/`, 52 tests |
+| Model | dbt `manifest.json` `child_map`, walked transitively from the source | Exact. dbt derives it from compiled SQL |
+| Column | Each direct child model's SQL: names the column, or `select *`, or neither | Stated on every result: "references the column", "selects *", or not affected |
 
-**Model:** `claude-sonnet-4-5` by default, override with `ANTHROPIC_MODEL`.
-The agent is the only component that calls it. Detection, classification,
-verification, PR creation and the gate are all deterministic code.
+A column no staging model selects correctly reports no impact. A missing
+manifest reports `unknown`, never "nothing affected".
 
----
+Shown in: `detect` (`breaks` column, red line naming marts hit by BREAKING),
+`status`, console, `META.DRIFT_EVENT.IMPACT`, `META.OPEN_DRIFT`, issue
+headline, PR "Downstream impact" section, and the agent prompt.
 
-## 5. Repository map
+Limits: needs `dbt parse` to have run. Column match is textual, errs toward
+over reporting. Covers the dbt graph only; add dbt exposures to include BI.
+
+### 4.7 dbt layer
+
+| Layer | Models | Purpose |
+|---|---|---|
+| staging | 8 views | Normalise RAW: trim, upper, coalesce tax, derive net |
+| marts | `fct_ap_open_items`, `fct_ar_open_items` | One row per invoice, paid vs outstanding, USD, aging bucket. **Enforced contracts** |
+| marts | `agg_ap_aging`, `agg_ar_aging` | By entity and bucket |
+| marts | `kpi_dso_dpo` | DSO/DPO per entity, trailing 90 days |
+
+22 tests. Amounts cast explicitly (`::number(18,2)`) because Snowflake widens
+through arithmetic and the enforced contract would otherwise fail.
+
+**Known limit.** Those casts mean the money-scale scenario builds green. The
+mart contract protects output shape; it cannot see that input lost meaning.
+Only the source contract catches that. dbt is not a second safety net here.
+
+### 4.8 Event lifecycle
 
 ```
-contracts/raw/       8 YAML contracts, one per source dataset. The agreement of record.
-control/             the control plane
-  config.py            .env loading, settings
-  snow.py              Snowflake connection (key pair auth)
-  contracts.py         parse, canonicalise, hash contracts
-  detect.py            observe live schema, diff, classify, persist   ← the core
-  register.py          publish contracts to META, append only
-  load.py              stage and COPY seed CSVs into RAW
-  agent.py             draft via Claude, verify, open PR or issue, sync with GitHub
-  cli.py               every command
-  ui.py + static/      the local console
-dbt/                 13 models, 22 tests, mart contracts enforced
-ops/sql/             00 bootstrap, 01 META DDL, 02 RAW DDL
-ops/scenarios/       7 drift scenarios plus a reset, all re-runnable
-seeds/               deterministic AP/AR data generator (~54k rows)
-tests/               52 tests, no warehouse or API required
-docs/KT.md           this document
-docs/BUILD_LOG.md    how it was built and why, including defects found
+detect ─► OPEN ─┬─► PROPOSED ─► MERGED
+                │       └──(PR closed)──► OPEN
+                └─► ESCALATED ─► DISMISSED
 ```
 
-### Snowflake objects
-
-| Object | Purpose |
-|---|---|
-| `FIN_AIWH_WH` | XSMALL warehouse, auto suspend 60s |
-| `FIN_AIWH.RAW` | Landed source data, contract governed |
-| `FIN_AIWH.STAGING` | dbt staging views |
-| `FIN_AIWH.MARTS` | dbt marts, what reports read |
-| `FIN_AIWH.META` | Control plane tables |
-| `FIN_AIWH.CI` | Ephemeral target for CI builds |
-| `FIN_AIWH_ENG` | Role |
-| `FIN_AIWH_SVC` | Service user, key pair auth, no password |
-
-### Control plane tables (`FIN_AIWH.META`)
-
-| Table | Holds | Note |
-|---|---|---|
-| `CONTRACT_REGISTRY` | Every registered contract version, hashed, tied to a git SHA | Append only. A drift event from last month can still be read against the contract in force then. |
-| `OBSERVED_SCHEMA` | What the warehouse looked like on each run | Evidence, not just conclusions |
-| `DRIFT_EVENT` | Every divergence, classified, with its reasoning | The work queue |
-| `RUN_LOG` | One row per detector run | A quiet run is still proof something was checked |
-
-Views: `ACTIVE_CONTRACT` (latest version per dataset), `OPEN_DRIFT` (what needs
-attention, worst first).
-
-### Source datasets
-
-`AP_VENDOR`, `AP_INVOICE`, `AP_INVOICE_LINE`, `AP_PAYMENT`, `AR_CUSTOMER`,
-`AR_INVOICE`, `AR_RECEIPT`, `FX_RATE`. Five legal entities, five currencies,
-USD reporting.
+Live: `OPEN`, `PROPOSED`, `ESCALATED`. The detector will not re-raise a
+divergence while one exists. Finished: `MERGED`, `DISMISSED`. A reappearance
+after those is new.
 
 ---
 
-## 6. Classification rules reference
-
-Section 3.2 explains how these are applied. This is the full table, for when
-you need to look one up or argue about a severity.
+## 5. Classification rules
 
 | Divergence | Severity | Why |
 |---|---|---|
 | Contracted table missing | BREAKING | Everything reading it fails |
-| Table with no contract | MEDIUM | Ungoverned, cannot be modelled safely |
-| Contracted column dropped | BREAKING | Anything selecting it fails. A dropped key also destroys row identity |
-| New nullable column | LOW | Nothing breaks, the contract is just stale |
-| New NOT NULL column | MEDIUM | Readers fine, writers unaware of it fail |
-| Base type changed | BREAKING | Every cast and comparison is suspect |
-| TEXT widened | LOW | Values still fit, downstream columns sized smaller will truncate |
+| Table with no contract | MEDIUM | Ungoverned, cannot be modelled |
+| Contracted column dropped | BREAKING | Selects fail. A dropped key destroys row identity |
+| New nullable column | LOW | Contract is stale, nothing breaks |
+| New NOT NULL column | MEDIUM | Readers fine, unaware writers fail |
+| Base type changed | BREAKING | Every cast and comparison suspect |
+| TEXT widened | LOW | Downstream sized smaller will truncate |
 | TEXT narrowed | BREAKING | Permitted values no longer fit |
-| NUMBER scale changed | BREAKING | Monetary precision moved, totals disagree |
-| NUMBER precision widened | LOW | Larger values now possible |
+| NUMBER scale changed | BREAKING | Monetary precision moved |
+| NUMBER precision widened | LOW | Larger values possible |
 | NUMBER precision narrowed | BREAKING | Permitted values overflow |
-| NOT NULL relaxed to nullable | BREAKING | Joins and aggregates assumed a value exists |
-| Nullable tightened to NOT NULL | MEDIUM | Readers fine, loads carrying nulls start failing |
+| NOT NULL → nullable | BREAKING | Joins and aggregates assumed a value |
+| Nullable → NOT NULL | MEDIUM | Loads carrying nulls start failing |
 
-Rules live in `control/detect.py` and are tested in `tests/test_detect.py`
-without a warehouse, so the logic that blocks a release is verifiable in a second.
+Change a severity: edit `diff_dataset()` or `_compare_type()` in
+`control/detect.py`, update `tests/test_detect.py`. Nothing else reads the
+rules; agent, gate and console all take severity from the event.
 
-**To change a severity**, edit `diff_dataset()` or `_compare_type()` in
-`control/detect.py` and update the matching test. Nothing else needs touching:
-the agent, the gate and the console all read severity from the event.
+---
 
-### Event lifecycle
+## 6. Repository and objects
 
 ```
-                 ┌─────────► PROPOSED ──(PR merged)──► MERGED
-   detect ──► OPEN                 ▲ │
-                 │                 │ └──(PR closed unmerged)──┐
-                 │                 └──────────────────────────┘
-                 └─────────► ESCALATED ──(issue closed)──► DISMISSED
+contracts/raw/       8 contracts, the agreement of record
+control/
+  config.py          .env and settings
+  snow.py            Snowflake connection, key pair auth
+  contracts.py       parse, canonicalise, hash
+  detect.py          observe, diff, classify, persist          ← core
+  lineage.py         dbt manifest → what a change breaks
+  register.py        publish contracts, append only
+  load.py            stage + COPY seed CSVs
+  agent.py           draft, verify, publish, sync
+  cli.py             every command
+  ui.py + static/    local console
+dbt/                 13 models, 22 tests
+ops/sql/             00 bootstrap, 01 META, 02 RAW, 03 impact migration
+ops/scenarios/       7 drift scenarios + reset, all re-runnable
+seeds/               deterministic AP/AR generator, ~54k rows
+tests/               62 tests
+docs/KT.md           this
+docs/BUILD_LOG.md    how it was built and why, with defects found
 ```
 
-`OPEN`, `PROPOSED` and `ESCALATED` are live. The detector will not raise the
-same divergence again while one of those exists, so a scheduled run does not
-create duplicate issues. `MERGED` and `DISMISSED` are finished, so a
-reappearance afterwards is genuinely new.
+| Snowflake object | Purpose |
+|---|---|
+| `FIN_AIWH_WH` | XSMALL, auto suspend 60s |
+| `RAW` / `STAGING` / `MARTS` | Landed data / dbt views / what reports read |
+| `META` | Control plane tables |
+| `CI` | Ephemeral target for gate builds |
+| `FIN_AIWH_ENG` | Role |
+| `FIN_AIWH_SVC` | Service user, key pair only |
+
+| META table | Holds |
+|---|---|
+| `CONTRACT_REGISTRY` | Every contract version, hashed, tied to git SHA. Append only |
+| `OBSERVED_SCHEMA` | Live schema per run |
+| `DRIFT_EVENT` | Every divergence: severity, reasoning, impact, status, resolution URL |
+| `RUN_LOG` | One row per run |
+| `ACTIVE_CONTRACT` (view) | Latest version per dataset |
+| `OPEN_DRIFT` (view) | Open events worst first, with affected marts |
+
+Datasets: `AP_VENDOR`, `AP_INVOICE`, `AP_INVOICE_LINE`, `AP_PAYMENT`,
+`AR_CUSTOMER`, `AR_INVOICE`, `AR_RECEIPT`, `FX_RATE`. Five entities, five
+currencies, USD reporting.
 
 ---
 
 ## 7. Setup from zero
 
-### 7.1 Snowflake, once
-
-Generate the key pair locally:
+### Snowflake, once
 
 ```bash
 mkdir -p .secrets
@@ -495,25 +345,21 @@ openssl rsa -in .secrets/fin_aiwh_rsa_key.p8 -pubout -out .secrets/fin_aiwh_rsa_
 chmod 600 .secrets/fin_aiwh_rsa_key.p8
 ```
 
-In a Snowsight worksheet as `ACCOUNTADMIN`:
+Snowsight worksheet as `ACCOUNTADMIN`:
 
-1. Run `ops/sql/00_bootstrap.sql` (warehouse, database, schemas, role, service user)
-2. Attach the public key:
+1. Run `ops/sql/00_bootstrap.sql`
+2. `ALTER USER FIN_AIWH_SVC SET RSA_PUBLIC_KEY='<.pub contents, no BEGIN/END lines>';`
 
-```sql
-ALTER USER FIN_AIWH_SVC SET RSA_PUBLIC_KEY='<contents of .pub without BEGIN/END lines>';
-```
-
-### 7.2 Local environment
+### Local
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # fill SNOWFLAKE_ACCOUNT and ANTHROPIC_API_KEY
+cp .env.example .env
+gh auth login
 ```
 
-`.env` (gitignored) is the single place connection settings live. Both the
-control plane and dbt read it.
+`.env`:
 
 ```
 SNOWFLAKE_ACCOUNT=ORGNAME-ACCOUNTNAME
@@ -525,40 +371,34 @@ SNOWFLAKE_DATABASE=FIN_AIWH
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Also needed for the agent: `gh` installed and authenticated (`gh auth login`),
-with push rights to the repo.
-
-### 7.3 Build the warehouse
+### Build
 
 ```bash
-python -m control.cli ping                              # verify the connection
+python -m control.cli ping
 python -m control.cli apply ops/sql/01_meta_control_plane.sql
 python -m control.cli apply ops/sql/02_raw_tables.sql
-python seeds/generate.py                                # ~54k rows of AP/AR data
-python -m control.cli load                              # stage and COPY into RAW
-python -m control.cli register                          # publish the 8 contracts
-python -m control.cli detect                            # expect: matches every contract
-python -m control.cli dbt build                         # expect: PASS=35
+python seeds/generate.py
+python -m control.cli load
+python -m control.cli register
+python -m control.cli dbt build
+python -m control.cli detect
 ```
 
-A clean `detect` is the baseline. Everything after this is drift.
+Expected: `ping` prints account details, `dbt build` reports `PASS=35`,
+`detect` reports `warehouse matches every registered contract`. That is the
+baseline. `dbt build` precedes `detect` because it writes the manifest impact
+analysis needs.
 
-### 7.4 GitHub
+### GitHub
 
-Secrets, under Settings → Secrets and variables → Actions:
-
-| Secret | Value |
+| Where | What |
 |---|---|
-| `SNOWFLAKE_ACCOUNT` | the account identifier |
-| `SNOWFLAKE_PRIVATE_KEY` | full contents of the `.p8`, BEGIN and END lines included |
+| Settings → Secrets → Actions | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PRIVATE_KEY` (full `.p8` contents, BEGIN/END included) |
+| Settings → Branches → `main` | Require checks: `rule tests`, `contracts match warehouse`, `dbt build (CI schema)` |
 
-Branch protection on `main`, requiring these status checks:
-`rule tests`, `contracts match warehouse`, `dbt build (CI schema)`.
-
-**This step is not optional.** `gh pr merge --auto` merges as soon as a PR is
-mergeable. Without required checks, the gate never runs and auto merge is
-decoration. The agent detects this and refuses to enable auto merge until it is
-configured.
+Branch protection is not optional. `gh pr merge --auto` merges the moment a PR
+is mergeable. Without required checks the gate never runs. The agent detects
+this and refuses to enable auto merge.
 
 ---
 
@@ -566,174 +406,157 @@ configured.
 
 ### Commands
 
-| Command | Does |
-|---|---|
-| `ping` | Verify the Snowflake connection |
-| `apply <file.sql>` | Run a SQL file. Refuses unqualified table DDL |
-| `load` | Stage and COPY seed CSVs into RAW |
-| `register` | Publish contracts to META. Append only, refuses an unbumped version |
-| `detect` | Compare warehouse to contracts, classify, persist events |
-| `status` | Active contracts and open drift |
-| `agent` | Turn open drift into PRs and issues |
-| `sync` | Read PR and issue outcomes back into the control plane |
-| `resolve` | Close events by hand |
-| `dbt <args>` | Run dbt with the control plane's connection settings |
-
-Useful flags:
-
-```bash
-python -m control.cli detect --dry-run              # report only, write nothing
-python -m control.cli detect --fail-on-breaking     # exit 2 on BREAKING. CI uses this
-python -m control.cli detect --dataset RAW.AP_INVOICE   # scope to one dataset
-python -m control.cli agent --dry-run               # draft and verify, touch nothing
-python -m control.cli agent --no-merge              # PRs, but never auto merge
-python -m control.cli sync --dry-run
-```
-
-### The operating cycle
-
-```bash
-python -m control.cli sync        # 1. what finished on GitHub
-python -m control.cli register    # 2. merged contracts become the agreement of record
-python -m control.cli detect      # 3. compare the warehouse against them
-python -m control.cli agent       # 4. act on what is left
-```
-
-**The order matters.** Any other sequence either judges against stale contracts
-or re-raises work already done. This is the sequence to put on a schedule.
-
-### The console
-
-```bash
-python -m control.ui              # http://127.0.0.1:8765
-```
-
-One page: fire drift scenarios, run the control plane, watch events, contracts
-and runs. Every button runs the same CLI command you would type and streams its
-output, so there is no second implementation to drift out of sync. Actions are
-allowlisted and it binds to loopback only.
-
-### Demonstrating it in four clicks
-
-1. `detect` → clean, the warehouse matches every contract
-2. `04 money scale changed` → the quiet one
-3. `detect` → two BREAKING events with the reasoning in plain language
-4. `agent` → a PR for what is safe, an issue for what is not
-
-### Drift scenarios
-
-| File | Change | Expected verdict |
+| Command | Does | Flags |
 |---|---|---|
-| `01_additive_column` | nullable column added | COLUMN_ADDED / LOW |
-| `02_required_column_added` | NOT NULL column added | COLUMN_ADDED / MEDIUM |
-| `03_type_widened` | VARCHAR(64) → VARCHAR(128) | TYPE_CHANGED / LOW |
-| `04_money_scale_changed` | NUMBER(18,2) → NUMBER(18,4) | TYPE_CHANGED / BREAKING |
-| `05_column_dropped` | contracted column removed | COLUMN_REMOVED / BREAKING |
-| `06_nullability_relaxed` | NOT NULL dropped | NULLABILITY_RELAXED / BREAKING |
-| `07_new_ungoverned_source` | new table, no contract | DATASET_UNGOVERNED / MEDIUM |
-| `99_reset` | rebuild RAW to v1 | then `load`, then `resolve --all` |
+| `ping` | Verify connection | |
+| `apply <file.sql>` | Run a SQL file. Refuses unqualified table DDL | |
+| `load` | Stage and COPY seed CSVs into RAW | `[TABLE ...]` |
+| `register` | Publish contracts. Append only | |
+| `detect` | Compare, classify, persist | `--dry-run`, `--fail-on-breaking`, `--dataset X` |
+| `status` | Contracts and open drift with affected marts | |
+| `agent` | Open drift → PRs and issues | `--dry-run`, `--no-merge`, `--dataset X` |
+| `sync` | GitHub outcomes → event status | `--dry-run` |
+| `resolve` | Close events by hand | `--all`, `--status`, `--ref` |
+| `dbt <args>` | dbt with the control plane's connection | any dbt args |
 
-All verified against the live account. All safe to run twice.
+### Operating cycle
+
+```bash
+python -m control.cli sync
+python -m control.cli register
+python -m control.cli detect
+python -m control.cli agent
+```
+
+Order matters. Reconcile what finished, make merged contracts the record,
+compare, act. This is the sequence to schedule.
+
+### Console
+
+```bash
+python -m control.ui
+```
+
+http://127.0.0.1:8765. Fire scenarios, run commands, watch events. Every
+button runs the same CLI command and streams its output. Allowlisted actions,
+loopback only.
+
+### Four click demo
+
+| Click | Result |
+|---|---|
+| `detect` | Clean |
+| `04 money scale changed` | Nothing errors anywhere |
+| `detect` | Two BREAKING events, plain language reasons, marts named |
+| `agent` | PR for what is safe, issue for what is not |
+
+### Scenarios
+
+| File | Change | Verdict |
+|---|---|---|
+| `01_additive_column` | Nullable column added | COLUMN_ADDED / LOW |
+| `02_required_column_added` | NOT NULL column added | COLUMN_ADDED / MEDIUM |
+| `03_type_widened` | VARCHAR 64 → 128 | TYPE_CHANGED / LOW |
+| `04_money_scale_changed` | NUMBER (18,2) → (18,4) | TYPE_CHANGED / BREAKING |
+| `05_column_dropped` | Contracted column removed | COLUMN_REMOVED / BREAKING |
+| `06_nullability_relaxed` | NOT NULL dropped | NULLABILITY_RELAXED / BREAKING |
+| `07_new_ungoverned_source` | New table, no contract | DATASET_UNGOVERNED / MEDIUM |
+| `99_reset` | Rebuild RAW to v1 | then `load`, `resolve --all` |
+
+All verified live. All safe to run twice.
+
+```bash
+python -m control.cli apply ops/scenarios/04_money_scale_changed.sql
+python -m control.cli detect --fail-on-breaking
+```
 
 ### Tests
 
 ```bash
-python -m pytest tests -q          # 52 tests, no Snowflake, no API key
+python -m pytest tests -q
 ```
 
 ---
 
-## 9. The release gate
+## 9. Release gate
 
-`.github/workflows/ci.yml`, three jobs on every pull request:
+`.github/workflows/ci.yml`, on every PR:
 
-| Job | Question |
+| Job | Question | How |
+|---|---|---|
+| `rule tests` | Do the rules still hold | `pytest tests` |
+| `contracts match warehouse` | Do the contracts **this PR changes** match live | `detect --dry-run --fail-on-breaking --dataset ...` |
+| `dbt build (CI schema)` | Does dbt build with contracts enforced | `dbt build -t ci` into `FIN_AIWH.CI` |
+
+| Design point | Why |
 |---|---|
-| `rule tests` | Do the classification rules still hold? |
-| `contracts match warehouse` | Do the contracts **this PR changes** match the live warehouse? |
-| `dbt build (CI schema)` | Does dbt build with mart contracts enforced? |
-
-Two design points worth knowing:
-
-→ The gate **reads only**. It runs `detect --dry-run`. Persisting events is the
-  scheduled detector's job; a gate that wrote would double count.
-→ It is **scoped to the contracts the PR changes**. The job diffs against the
-  base branch, reads the dataset key out of each changed contract file, and
-  limits detection to those. A correct PR must not fail because of unrelated
-  drift somewhere else in the warehouse.
-
-Builds land in `FIN_AIWH.CI`, never in STAGING or MARTS.
+| Reads only | Persisting events is the scheduled detector's job. A gate that wrote would double count |
+| Scoped to changed contracts | Diffs against base, reads `dataset` from each changed file. A correct PR must not fail on unrelated drift |
+| CI schema | PR builds never touch STAGING or MARTS |
 
 ---
 
 ## 10. State of play
 
-### Working, verified on a live account
+### Working, verified live
 
-→ Control plane: 8 contracts registered, detection and classification correct on
-  all 7 drift scenarios
-→ dbt: 13 models, 22 tests, mart contracts enforced, full build green
-→ Agent: drafts, is verified, opens PRs and issues, routes by severity correctly
-→ Full cycle demonstrated: drift detected → agent PR → merged → registered →
-  dataset clean at contract v2 → events reconciled to MERGED
-→ Console, 52 tests, `sync` closing the lifecycle both ways
+| Area | State |
+|---|---|
+| Detection | 8 contracts, all 7 scenarios classified correctly |
+| dbt | 13 models, 22 tests, contracts enforced, `PASS=35` |
+| Agent | Drafts, verifies, opens PRs and issues, routes correctly |
+| Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
+| Impact | On every event, in every PR and issue |
+| Console, sync, 62 tests | Done |
 
 ### Not done
 
-→ **Branch protection is not configured.** Until it is, auto merge is disabled
-  by the agent, so the LOW path needs a human to click merge.
-→ **The gate has not yet been observed running.** The workflow and secrets are
-  in place but no run has been watched go green or red.
-→ **Nothing is scheduled.** The operating cycle is run by hand today.
-→ **Jira handoff** for MEDIUM events, deliberately deferred.
+| Item | Effect |
+|---|---|
+| Branch protection not configured | Agent refuses auto merge, LOW path needs a human click |
+| Gate never observed running | Workflow and secrets exist, no run watched |
+| Nothing scheduled | Operating cycle is manual |
+| Jira handoff | Deferred |
 
 ### Known limits
 
-→ dbt's own mart contracts will not catch a precision loss upstream, because the
-  models cast explicitly. Only the input contract sees it. This is by design and
-  is the point of the control plane, but it is worth stating so nobody assumes
-  dbt is a second safety net for that class of change.
-→ CI reuses `FIN_AIWH_SVC`. A production setup would give CI its own service
-  user with a narrower role.
-→ Seed data is synthetic. Volumes are demo scale, not several TB.
+| Limit | Note |
+|---|---|
+| dbt does not catch upstream precision loss | By design. Only the source contract sees it |
+| CI reuses `FIN_AIWH_SVC` | Production would use a separate CI user and narrower role |
+| Synthetic seed data | Demo scale, not TB scale |
+| Column lineage is textual | Errs toward over reporting |
 
 ---
 
-## 11. Where this goes next
+## 11. Roadmap
 
-**Near term**
+| Priority | Item | Why |
+|---|---|---|
+| 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
+| 2 | Schedule `sync → register → detect → agent` | Proves self-managing literally |
+| 3 | Jira handoff for MEDIUM | Events land in the team's real queue |
+| 4 | Agent remediates BREAKING | Compatibility view, backfill, staged contract with deprecation window |
+| 5 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
-1. Branch protection, then watch one full gated PR go green. This makes the
-   LOW path genuinely autonomous.
-2. Put the operating cycle on a schedule (`sync → register → detect → agent`).
-3. Jira handoff so MEDIUM events land in the team's actual queue.
-
-**The larger goal**
-
-Drift adoption is the first and easiest slice. The same shape — propose,
-verify deterministically, gate — extends to the rest of routine data
-engineering: new source onboarding, model changes that follow a contract
-change, test generation from contract constraints, backfill planning. The
-value is not that an AI writes SQL. It is that every change an AI proposes is
-checked by rules a human wrote, and blocked by a gate a human controls.
-
-**On replacing Claude.** The agent is the only component calling a hosted
-model, behind one function with a structured interface. Swapping it for a
-self-hosted model is a contained change. Nothing else in the system knows or
-cares which model drafted a proposal, because the verification does not trust
-the draft either way.
+**Replacing Claude.** The agent is the only hosted model call, behind one
+function with a structured interface. Swapping to a self-hosted model is
+contained. Verification does not trust the draft either way.
 
 ---
 
 ## 12. Troubleshooting
 
-| Symptom | Cause and fix |
+| Symptom | Fix |
 |---|---|
-| `Could not connect to Snowflake backend` | Network or account identifier. Check `SNOWFLAKE_ACCOUNT` is `ORGNAME-ACCOUNTNAME`, and that the host is reachable |
-| `refusing to apply: unqualified table names` | SQL uses a bare table name. Use `FIN_AIWH.<SCHEMA>.<TABLE>`. Unqualified DDL lands in the session's default schema |
-| `contract content changed but version is still N` | Bump `version` in the contract file before registering |
-| Agent reports `auto merge NOT enabled` | Branch protection on `main` requires no status checks. Configure it (section 7.4) |
-| `working tree is not clean` from the agent | Commit or stash first. The agent branches from `origin/main` and needs a clean tree |
-| Contract shows an old version in `status` | A merged contract is not in force until `register` runs |
-| `detect` reports drift already handled | Expected. It shows `already being worked on N` and does not duplicate |
-| dbt contract error on a fact model | A cast changed shape. Mart contracts in `dbt/models/marts/marts.yml` are enforced deliberately |
+| `Could not connect to Snowflake backend` | Check `SNOWFLAKE_ACCOUNT` is `ORGNAME-ACCOUNTNAME` and the host is reachable |
+| `refusing to apply: unqualified table names` | Use `FIN_AIWH.<SCHEMA>.<TABLE>`. Bare names land in the session default schema |
+| `contract content changed but version is still N` | Bump `version` in the YAML |
+| `auto merge NOT enabled` | Configure branch protection, section 7 |
+| `working tree is not clean` | Commit or stash. Agent branches from `origin/main` |
+| Old contract version in `status` | Run `register` after a merge |
+| `already being worked on N` | Expected. Dedupe is working |
+| Impact shows `no manifest` | `dbt/target/` is gitignored. Run `dbt parse` |
+| `IMPACT` column missing | Run `apply ops/sql/03_event_impact.sql` |
+| dbt contract error on a fact model | A cast changed shape. Contracts in `marts.yml` are enforced deliberately |
+| Pasted commands fail with `unrecognized arguments: #` | Trailing comments are passed as arguments. Paste commands without them |
