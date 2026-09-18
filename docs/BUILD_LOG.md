@@ -1162,3 +1162,9 @@ Also: `NULL_COUNT` refused `IS_ACTIVE` as BOOLEAN, then cast to VARCHAR, then
 cast to NUMBER. Three guesses at a type it would take was two too many. It is
 a custom DMF with `BOOLEAN` declared now, the same pattern as freshness, and
 attachable for the same reason.
+
+**And composite keys.** `SNOWFLAKE.CORE.DUPLICATE_COUNT` takes one column.
+`FX_RATE`'s key is four. Three custom DMFs now sit beside the system ones,
+each for something the system set cannot express: freshness on NTZ, nulls in
+a BOOLEAN, duplicates over a composite key. The pattern has held each time.
+Where Snowflake's function is narrower than the contract, own the function.

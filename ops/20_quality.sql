@@ -45,10 +45,27 @@ $$;
 
 GRANT USAGE ON FUNCTION FIN_AIWH.META.NULL_COUNT_BOOL(TABLE(BOOLEAN)) TO ROLE FIN_AIWH_ENG;
 
+-- 2c. Duplicate count over a composite key. SNOWFLAKE.CORE.DUPLICATE_COUNT
+--     takes one column. FX_RATE's key is four. The caller concatenates the key
+--     columns into one text value; this counts rows beyond the first per value.
+CREATE OR REPLACE DATA METRIC FUNCTION FIN_AIWH.META.DUPLICATE_COUNT_KEY(
+    arg_t TABLE(arg_c VARCHAR)
+)
+RETURNS NUMBER
+AS
+$$
+    SELECT COUNT(*) - COUNT(DISTINCT arg_c) FROM arg_t
+$$;
+
+GRANT USAGE ON FUNCTION FIN_AIWH.META.DUPLICATE_COUNT_KEY(TABLE(VARCHAR)) TO ROLE FIN_AIWH_ENG;
+
 -- 3. Prove it, as ACCOUNTADMIN, before handing to the CLI.
 SELECT SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT INVOICE_ID FROM FIN_AIWH.RAW.AP_INVOICE)  AS dup_invoice_ids,
        SNOWFLAKE.CORE.NULL_COUNT(SELECT GROSS_AMOUNT FROM FIN_AIWH.RAW.AP_INVOICE)      AS null_amounts,
        FIN_AIWH.META.NULL_COUNT_BOOL(SELECT IS_ACTIVE FROM FIN_AIWH.RAW.AP_VENDOR)          AS null_flags,
+       FIN_AIWH.META.DUPLICATE_COUNT_KEY(
+         SELECT CONCAT_WS('\u001f', RATE_DATE::VARCHAR, FROM_CURRENCY::VARCHAR, TO_CURRENCY::VARCHAR, RATE_TYPE::VARCHAR)
+         FROM FIN_AIWH.RAW.FX_RATE)                                                            AS dup_fx_keys,
        (DATE_PART(EPOCH_SECOND, SYSDATE())
           - FIN_AIWH.META.NEWEST_EPOCH_NTZ(SELECT LOADED_AT FROM FIN_AIWH.RAW.AP_INVOICE)) / 3600
                                                                                            AS hours_behind;

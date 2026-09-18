@@ -34,11 +34,20 @@ def test_primary_key_becomes_a_duplicate_check():
     assert dup[0].max == 0 and dup[0].severity == BREAKING
 
 
-def test_a_composite_key_is_one_check_over_all_its_columns():
+def test_a_composite_key_is_one_check_folded_into_one_value():
+    """The system DUPLICATE_COUNT takes one column, so a composite key is
+    concatenated and counted by a custom DMF. It cannot be attached."""
     c = contract(primary_key=["INVOICE_ID", "LOADED_AT"])
     dup = next(x for x in desired(c) if x.change_type == "DUPLICATE_KEY")
     assert dup.columns == ("INVOICE_ID", "LOADED_AT")
-    assert "INVOICE_ID, LOADED_AT" in dup.sql()
+    assert dup.dmf == "FIN_AIWH.META.DUPLICATE_COUNT_KEY"
+    assert "CONCAT_WS(" in dup.sql() and "INVOICE_ID::VARCHAR, LOADED_AT::VARCHAR" in dup.sql()
+    assert not dup.attachable
+
+
+def test_a_single_column_key_uses_the_system_dmf_and_is_attachable():
+    dup = next(x for x in desired(contract()) if x.change_type == "DUPLICATE_KEY")
+    assert dup.dmf == "SNOWFLAKE.CORE.DUPLICATE_COUNT" and dup.attachable
 
 
 def test_every_not_null_column_gets_a_null_check_and_nullable_ones_do_not():

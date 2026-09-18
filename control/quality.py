@@ -58,6 +58,11 @@ QUALITY_TYPES = {"DUPLICATE_KEY", "NULL_IN_REQUIRED", "STALE", "EXPECTATION_BREA
 # which is also attachable. Same pattern as freshness.
 DMF_BY_TYPE = {"BOOLEAN": f"{DMF_SCHEMA}.NULL_COUNT_BOOL"}
 
+# SNOWFLAKE.CORE.DUPLICATE_COUNT takes one column. A composite key is folded
+# into one text value first, with a separator no code column will contain.
+COMPOSITE_DUP_DMF = f"{DMF_SCHEMA}.DUPLICATE_COUNT_KEY"
+KEY_SEP = "\\u001f"
+
 
 @dataclass(frozen=True)
 class Check:
@@ -79,11 +84,20 @@ class Check:
         return ",".join(self.columns) if self.columns else "*"
 
     @property
+    def attachable(self) -> bool:
+        """ALTER TABLE ... ADD DATA METRIC FUNCTION names columns, not expressions."""
+        return not (self.change_type == "DUPLICATE_KEY" and len(self.columns) > 1)
+
+    @property
     def label(self) -> str:
         return f"{self.dmf.rsplit('.', 1)[-1]}({self.object_name})"
 
     def sql(self) -> str:
-        cols = ", ".join(self.columns) if self.columns else "*"
+        if self.change_type == "DUPLICATE_KEY" and len(self.columns) > 1:
+            parts = ", ".join(f"{c}::VARCHAR" for c in self.columns)
+            cols = f"CONCAT_WS('{KEY_SEP}', {parts})"
+        else:
+            cols = ", ".join(self.columns) if self.columns else "*"
         call = f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"
         if self.change_type == "STALE":
             # The DMF returns the newest load as epoch seconds (a DMF body may
@@ -114,7 +128,7 @@ def desired(contract: Contract) -> list[Check]:
     if contract.primary_key:
         out.append(Check(
             dataset_key=key, change_type="DUPLICATE_KEY",
-            dmf="SNOWFLAKE.CORE.DUPLICATE_COUNT",
+            dmf=COMPOSITE_DUP_DMF if len(contract.primary_key) > 1 else "SNOWFLAKE.CORE.DUPLICATE_COUNT",
             columns=tuple(contract.primary_key), min=None, max=0, severity=BREAKING,
             why=f"primary_key is {contract.primary_key}; a duplicate makes every join fan out",
         ))
@@ -226,7 +240,8 @@ def attached(conn, dataset_key: str) -> set[tuple[str, tuple[str, ...]]]:
 
 def reconcile(conn, contract: Contract, schedule: str = "TRIGGER_ON_CHANGES") -> tuple[list[str], list[str]]:
     """Make the attached DMFs equal what the contract implies. Returns (added, dropped)."""
-    want = {(c.dmf.upper(), tuple(x.upper() for x in c.columns)) for c in desired(contract)}
+    want = {(c.dmf.upper(), tuple(x.upper() for x in c.columns))
+            for c in desired(contract) if c.attachable}
     have = attached(conn, contract.dataset)
     table = f"FIN_AIWH.{contract.dataset}"
     added, dropped = [], []
