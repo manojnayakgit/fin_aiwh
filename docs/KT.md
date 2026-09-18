@@ -664,7 +664,8 @@ nothing to do and exits clean.
 | Agent | Drafts, verifies, opens PRs and issues, routes correctly, shields breaking drift |
 | Gate | Observed green on an agent-authored shield PR: rule tests, contracts, dbt build |
 | Shields | Two merged live. `dbt build` went from ERROR to `PASS=36` with the drift still open |
-| Full cycle, LOW/MEDIUM | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
+| Full cycle, LOW | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
+| MEDIUM alone | REVENUE_STREAM adopt PR drafted once its dataset was otherwise clean; never auto-merged |
 | Full cycle, BREAKING | break → issue → shield PR → merged → repair → retire PR → merged → issue closed → sync dismisses |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |

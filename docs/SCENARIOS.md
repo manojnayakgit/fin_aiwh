@@ -26,7 +26,7 @@ artifact that proves it happened.
 | # | Scenario | Change | Verdict | Status | Artifact |
 |---|---|---|---|---|---|
 | 01 | Additive column | `AP_INVOICE.APPROVER_ID` added, nullable | `COLUMN_ADDED` / LOW | **Passed** | PR #2, merged `2a2de28` |
-| 02 | Required column added | `AR_INVOICE.REVENUE_STREAM` added NOT NULL | `COLUMN_ADDED` / MEDIUM | **Passed** | escalated with the AR_INVOICE bundle, issue #4 |
+| 02 | Required column added | `AR_INVOICE.REVENUE_STREAM` added NOT NULL | `COLUMN_ADDED` / MEDIUM | **Passed** | first swept into issue #4 with the bundle; after repair, adopt PR on `drift/ar_invoice-v2` |
 | 03 | Type widened | `AP_INVOICE.INVOICE_NUMBER` VARCHAR 64 → 128 | `TYPE_CHANGED` / LOW | **Passed** | PR #2, merged `2a2de28` |
 | 04 | Money scale changed | `AP_INVOICE` amounts NUMBER(18,2) → (18,4) | `TYPE_CHANGED` / BREAKING | **Passed** | no PR by design, BREAKING never auto-adopts |
 | 05 | Column dropped | `AP_PAYMENT.BANK_REF` removed | `COLUMN_REMOVED` / BREAKING | **Passed** | issue #3, shield PR #5, merged `72485a8` |
@@ -127,9 +127,13 @@ RAW.AR_INVOICE.REVENUE_STREAM   ESCALATED still
 RAW.AR_INVOICE.STATUS           ESCALATED still
 ```
 
-**Note.** The MEDIUM path in isolation has been proven by scenario 01's sibling
-LOW path and by unit tests of bundling (`test_bundles_group_by_dataset_and_pick_worst`).
-A MEDIUM event alone on a clean dataset has not been fired live.
+**Then, on its own.** Once scenario 08 repaired the BREAKING drift on the same
+table and issue #4 closed, the detector re-raised `REVENUE_STREAM` as a fresh
+event on a now-clean dataset, and the agent took the MEDIUM path in isolation:
+contract v2 with the column as `TEXT(16)`, `nullable: false`, description marked
+inferred, and `upper(revenue_stream)` appended to the staging model in the
+existing style. Branch `drift/ar_invoice-v2`. Not auto-merged, as MEDIUM never
+is.
 
 ---
 
@@ -455,7 +459,7 @@ As of the last `sync`, four events open or escalated:
 |---|---|---|---|
 | `RAW.AP_ACCRUAL` | (dataset) | PROPOSED → MERGED after `sync` | 07, PR #7 merged |
 | `RAW.AP_PAYMENT` | `BANK_REF` | ESCALATED → DISMISSED after `sync` | 05 repaired by 08, issue #3 closed |
-| `RAW.AR_INVOICE` | `REVENUE_STREAM` | ESCALATED | 02, still a MEDIUM to adopt |
+| `RAW.AR_INVOICE` | `REVENUE_STREAM` | PROPOSED | 02, adopt PR open on `drift/ar_invoice-v2` |
 | `RAW.AR_INVOICE` | `STATUS` | ESCALATED → DISMISSED after `sync` | 06 repaired by 08, issue #4 closed |
 
 Escalated drift stays open on purpose. A shield keeps the reports correct while
@@ -474,7 +478,6 @@ the source is fixed, and hides nothing from the control plane.
 | **Branch protection on `main`** | Not configured | Until it is, the agent refuses to enable auto-merge, and correctly says why. The LOW path needs one human click that it should not need |
 | **One shield PR for all breaking datasets** | Not started | Two shields opened separately both fail the gate until the first merges, because the build is project-wide |
 | **Live scenario for `DATASET_MISSING`** | Rule only | Dropping a contracted table live is destructive to the demo. The rule is unit tested |
-| **MEDIUM alone on a clean dataset** | Rule only | Every live MEDIUM so far has shared a dataset with a BREAKING event, so bundling routed it to escalation |
 
 ---
 
