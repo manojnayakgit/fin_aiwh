@@ -553,6 +553,8 @@ python -m pytest tests -q
 | Detection | 8 contracts, all 7 scenarios classified correctly |
 | dbt | 13 models, 22 tests, contracts enforced, `PASS=35` |
 | Agent | Drafts, verifies, opens PRs and issues, routes correctly, shields breaking drift |
+| Gate | Observed green on an agent-authored shield PR: rule tests, contracts, dbt build |
+| Shields | Two merged live. `dbt build` went from ERROR to `PASS=36` with the drift still open |
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
 | Console, sync, scheduled cycle, 75 tests | Done |
@@ -561,7 +563,7 @@ python -m pytest tests -q
 
 | Item | Effect |
 |---|---|
-| Branch protection not configured | Agent refuses auto merge, LOW path needs a human click |
+| Branch protection not configured | Agent refuses auto merge, LOW path needs a human click. Also means a stale shield branch is not forced to update before merging |
 | Jira handoff | Deferred |
 
 ### Known limits
@@ -581,6 +583,7 @@ python -m pytest tests -q
 | Priority | Item | Why |
 |---|---|---|
 | 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
+| 4 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
 | 3 | Staged contract change after a shield | v+1 marks the column deprecated, v+2 removes it, so a shield is retired on a schedule instead of by hand |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
@@ -606,3 +609,5 @@ contained. Verification does not trust the draft either way.
 | `IMPACT` column missing | Run `apply ops/sql/03_event_impact.sql` |
 | dbt contract error on a fact model | A cast changed shape. Contracts in `marts.yml` are enforced deliberately |
 | Pasted commands fail with `unrecognized arguments: #` | Trailing comments are passed as arguments. Paste commands without them |
+| A shield PR fails on a column from a different dataset | Its branch predates another shield that has since merged. `git merge origin/main` into the branch and push, or turn on "Require branches to be up to date" |
+| Gate fails on a change that touches no contracts | Fixed. Detect is informational when no contract files changed. If it recurs, check the `scope` step's output |

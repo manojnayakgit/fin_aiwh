@@ -760,3 +760,35 @@ Seven tests cover the mapping, with `gh` mocked out.
 → branch protection on main, without which auto merge is decoration
 → run the detector on a schedule, in the sync → register → detect → agent order
 → Jira handoff for MEDIUM events
+
+
+---
+
+## Gate and shields proven live
+
+The release gate ran green for the first time on a pull request the system
+wrote itself: `Shield AP_PAYMENT`, three checks passed.
+
+Getting there exposed two things.
+
+**The gate was judging the warehouse, not the change.** A push touching no
+contract files fell back to scanning every contract, and failed because the
+warehouse had breaking drift that had nothing to do with the push. Every run
+since the secrets were added was red for this reason. Fixed: a change with no
+contract files runs detect informationally and cannot fail on it.
+
+**`dbt build` then failed for the right reason.** `stg_ap_payment` still
+selected `BANK_REF`, which upstream had dropped, so the model could not compile
+and 13 downstream models were skipped. That is the gate telling the truth: main
+could not build against the warehouse as it stood.
+
+The agent's shields fixed exactly that. `null::varchar(64) as bank_ref` for the
+dropped column, a pass-through plus a failing test for the relaxed nullability.
+After both merged, `dbt build` reported `PASS=36 ERROR=0`, with the drift still
+open and both issues still open.
+
+**One rough edge.** The second shield PR failed the gate on the first shield's
+column, because its branch predated that merge and the build is project wide.
+Merging main into the branch cleared it. Two fixes on the roadmap: require
+branches to be up to date, or open a single shield PR covering every
+unbuildable dataset at once.
