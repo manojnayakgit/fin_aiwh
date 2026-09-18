@@ -53,6 +53,13 @@ SYSTEM_DMFS = {
 QUALITY_TYPES = {"DUPLICATE_KEY", "NULL_IN_REQUIRED", "STALE", "EXPECTATION_BREACHED"}
 
 
+# System DMFs refuse some types. NULL_COUNT on a BOOLEAN is the one that bites
+# here (AP_VENDOR.IS_ACTIVE). For the synchronous call the column is cast to
+# text, which changes nothing about whether it is null. Attaching cannot cast,
+# so such checks are measured but not attached.
+CAST_FOR_DMF = {"BOOLEAN": "VARCHAR"}
+
+
 @dataclass(frozen=True)
 class Check:
     dataset_key: str
@@ -63,6 +70,11 @@ class Check:
     max: float | None
     severity: str
     why: str                  # what the contract said that justifies this
+    casts: tuple[str, ...] = ()   # per column: "" or a type to cast to first
+
+    @property
+    def attachable(self) -> bool:
+        return not any(self.casts)
 
     @property
     def table(self) -> str:
@@ -77,7 +89,9 @@ class Check:
         return f"{self.dmf.rsplit('.', 1)[-1]}({self.object_name})"
 
     def sql(self) -> str:
-        cols = ", ".join(self.columns) if self.columns else "*"
+        casts = self.casts or ("",) * len(self.columns)
+        exprs = [f"CAST({c} AS {k})" if k else c for c, k in zip(self.columns, casts)]
+        cols = ", ".join(exprs) if exprs else "*"
         call = f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"
         if self.change_type == "STALE":
             # The DMF returns the newest load as epoch seconds (a DMF body may
@@ -120,6 +134,7 @@ def desired(contract: Contract) -> list[Check]:
                 dmf="SNOWFLAKE.CORE.NULL_COUNT",
                 columns=(c.name,), min=None, max=0, severity=BREAKING,
                 why=f"{c.name} is contracted NOT NULL",
+                casts=(CAST_FOR_DMF.get(c.type.upper(), ""),),
             ))
 
     f = contract.freshness or {}
@@ -220,7 +235,8 @@ def attached(conn, dataset_key: str) -> set[tuple[str, tuple[str, ...]]]:
 
 def reconcile(conn, contract: Contract, schedule: str = "TRIGGER_ON_CHANGES") -> tuple[list[str], list[str]]:
     """Make the attached DMFs equal what the contract implies. Returns (added, dropped)."""
-    want = {(c.dmf.upper(), tuple(x.upper() for x in c.columns)) for c in desired(contract)}
+    want = {(c.dmf.upper(), tuple(x.upper() for x in c.columns))
+            for c in desired(contract) if c.attachable}
     have = attached(conn, contract.dataset)
     table = f"FIN_AIWH.{contract.dataset}"
     added, dropped = [], []

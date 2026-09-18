@@ -104,9 +104,14 @@ def cmd_apply(args):
 def cmd_load(args):
     with connect() as conn:
         results = load_all(conn, args.tables or None)
+    rc = 0
     for table, n in results:
-        console.print(f"  [green]loaded[/green] {table:<18} {n:>8,} rows")
-    return 0
+        if isinstance(n, str):
+            rc = 1
+            console.print(f"  [yellow]{table:<18}[/yellow] {n}")
+        else:
+            console.print(f"  [green]loaded[/green] {table:<18} {n:>8,} rows")
+    return rc
 
 
 def cmd_register(_args):
@@ -146,8 +151,11 @@ def cmd_detect(args):
         # measured: a DMF on a column that was dropped upstream would just fail.
         content: list = []
         if not args.no_quality:
-            broken = {f.dataset_key for f in findings if f.severity == BREAKING}
-            measurable = [c for c in contracts if c.dataset in observed and c.dataset not in broken]
+            # A DMF on a dropped column fails; on a relaxed one it is exactly
+            # the question worth asking. Exclude only what cannot be measured.
+            unmeasurable = {f.dataset_key for f in findings
+                            if f.change_type in ("DATASET_MISSING", "COLUMN_REMOVED", "TYPE_CHANGED")}
+            measurable = [c for c in contracts if c.dataset in observed and c.dataset not in unmeasurable]
             try:
                 content = quality_mod.check_all(conn, measurable)
             except Exception as e:  # noqa: BLE001

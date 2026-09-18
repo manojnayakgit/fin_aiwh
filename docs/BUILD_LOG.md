@@ -1102,3 +1102,32 @@ generated CSVs is a fixed constant. A day after loading, all nine tables would
 have reported STALE with nothing wrong. `load` now stamps the real load time,
 and the session is pinned to UTC so the NTZ values the CLI writes and the clock
 it compares against cannot drift apart by a timezone.
+
+
+---
+
+## `load` emptied a table, and the seed is a version behind the warehouse
+
+`python -m control.cli load` truncated `AP_INVOICE` and then failed the COPY:
+the seed CSV has 12 columns, the live table has 13. `APPROVER_ID` was adopted
+into contract v2 back in scenario 01, and `COPY INTO` with no column list wants
+an exact match. Truncate first, discover you cannot load second.
+
+Two rules now. The copy names its columns, positional from the CSV header, so a
+live column the seed does not carry arrives as NULL. And before anything is
+truncated, the planner checks that every NOT NULL column with no default is in
+the CSV; if not, the table is skipped with the reason and its data left alone.
+`AR_INVOICE` hits that today: `REVENUE_STREAM` is NOT NULL from scenario 02
+and not yet adopted, so `load` refuses it rather than emptying it.
+
+This is the same lesson as the branch-from-origin rule: do the check that can
+refuse before the step that cannot be undone.
+
+`99_reset` has the same disease in a worse form. It hard-codes the version 1
+shape, so running it now would drop `AP_ACCRUAL`, which is contracted and
+modelled, and strip `APPROVER_ID` from `AP_INVOICE`, which is contracted at v2.
+Both BREAKING. It carries a warning and is on the roadmap to be generated from
+the contracts, which is the only way it cannot fall behind them.
+
+Also: `NULL_COUNT` refuses BOOLEAN. `IS_ACTIVE` is measured through a cast to
+text, which changes nothing about whether it is null, and is not attached.

@@ -154,3 +154,13 @@ def test_scenario_scripts_and_load_use_one_clock():
         s = f.read_text().upper()
         if "LOADED_AT" in s and ("UPDATE" in s or "INSERT" in s):
             assert "SYSDATE()" in s or "CURRENT_TIMESTAMP()" in s, f.name
+
+
+def test_boolean_not_null_is_measured_through_a_cast_and_not_attached():
+    c = contract(columns=[ContractColumn("VENDOR_ID", "TEXT", False),
+                          ContractColumn("IS_ACTIVE", "BOOLEAN", False)],
+                 primary_key=["VENDOR_ID"], freshness={})
+    nulls = {x.columns[0]: x for x in desired(c) if x.change_type == "NULL_IN_REQUIRED"}
+    assert "CAST(IS_ACTIVE AS VARCHAR)" in nulls["IS_ACTIVE"].sql()
+    assert not nulls["IS_ACTIVE"].attachable
+    assert "CAST" not in nulls["VENDOR_ID"].sql() and nulls["VENDOR_ID"].attachable

@@ -1,3 +1,10 @@
+-- WARNING, September 2026: this file rebuilds RAW to the ORIGINAL version 1
+-- shape and is now behind the contracts. AP_INVOICE is at v2 with APPROVER_ID,
+-- and AP_ACCRUAL is contracted and has a staging model, so running this as-is
+-- raises COLUMN_REMOVED on AP_INVOICE and DATASET_MISSING on AP_ACCRUAL, both
+-- BREAKING, and dbt build fails. Roadmap: generate reset DDL from the contracts
+-- so it cannot fall behind them. Until then, do not run this.
+--
 -- Undo every scenario. Rebuilds RAW to the version 1 shape and drops the
 -- ungoverned table. Reload data afterwards:
 --   python -m control.cli load

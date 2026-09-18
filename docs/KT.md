@@ -612,7 +612,7 @@ what is deliberately not started, is in `docs/SCENARIOS.md`.
 | `09_duplicate_key` | one invoice row duplicated | DUPLICATE_KEY / BREAKING, schema untouched |
 | `10_stale_source` | AR_RECEIPT stops loading | STALE / MEDIUM, 72h behind against 24h allowed |
 | `11_content_repaired` | 09 and 10 fixed at source | `agent` closes both issues, dismisses both events |
-| `99_reset` | Rebuild RAW to v1 | then `load`, `resolve --all` |
+| `99_reset` | Rebuild RAW to v1 | **Do not run.** Behind the contracts now (AP_INVOICE v2, AP_ACCRUAL). Roadmap: generate it from the contracts |
 
 All verified live. All safe to run twice.
 
@@ -700,6 +700,7 @@ nothing to do and exits clean.
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
 | 3 | Staged contract change after a shield | For a column that is never coming back. Retirement covers the case where upstream repairs it |
 | 3 | Content governance, live | Built. Run `ops/20_quality.sql`, then scenarios 09 to 11 |
+| 3 | Reset generated from contracts | `99_reset` hard-codes the v1 shape and is now wrong. `ddl_type()` already turns a contract column into DDL; a `reset` command should build every table from its contract |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
 **Replacing Claude.** The agent is the only hosted model call, behind one
@@ -716,6 +717,8 @@ contained. Verification does not trust the draft either way.
 | A publish died and the branch already exists | A run that failed after the push left the branch behind | Nothing. The next run deletes it and recreates from `origin/base` |
 | `gh pr create` fails with no visible reason | Older `_run` hid the subprocess output | Fixed. Failures now print what the command said |
 | `git commit failed: nothing to commit` on a shield | The shield was already merged, or the drift is gone | Fixed. The agent skips both cases and says which |
+| `load` says `skipped: table has NOT NULL columns with no default that the seed does not carry` | The table moved past the v1 seed (scenario 02 added `REVENUE_STREAM` NOT NULL) | Nothing was truncated. Either adopt the column so the seed can be regenerated, or leave that table's data as it is |
+| `Invalid argument types for function 'NULL_COUNT'` | A NOT NULL BOOLEAN column | Fixed. Measured through a cast, not attached |
 
 
 | Symptom | Fix |
