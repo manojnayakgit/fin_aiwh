@@ -11,5 +11,6 @@ select
     gross_amount - coalesce(tax_amount, 0) as net_amount,
     upper(status)             as status,
     source_system,
-    loaded_at
+    loaded_at,
+    upper(revenue_stream)     as revenue_stream
 from {{ source('raw', 'AR_INVOICE') }}

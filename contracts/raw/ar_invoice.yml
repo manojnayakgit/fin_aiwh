@@ -4,7 +4,7 @@
 # against it on every detector run. Changing it is a reviewed pull request.
 
 dataset: RAW.AR_INVOICE
-version: 1
+version: 2
 owner: finance-data-engineering
 classification: financial-restricted
 description: Accounts receivable invoice header.
@@ -79,3 +79,8 @@ columns:
     type: TIMESTAMP_NTZ
     nullable: false
     description: Ingestion watermark.
+  - name: REVENUE_STREAM
+    type: TEXT
+    length: 16
+    nullable: false
+    description: Revenue classification category, inferred from column name.
