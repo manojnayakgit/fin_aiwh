@@ -323,6 +323,16 @@ def persist(conn, run_id: str, findings: list[Finding], contracts: list[Contract
     for f in findings:
         fp = f.fingerprint()
         if fp in already:
+            # Do not raise it again, but do keep its impact current: lineage
+            # changes as the dbt project changes, and an event open for a week
+            # should say what it breaks today, not what it broke when raised.
+            if f.impact is not None:
+                execute(
+                    conn,
+                    "UPDATE FIN_AIWH.META.DRIFT_EVENT SET IMPACT = TRY_PARSE_JSON(%(impact)s) "
+                    "WHERE EVENT_ID = %(event_id)s",
+                    {"impact": json.dumps(f.impact.as_dict()), "event_id": fp},
+                )
             suppressed += 1
             continue
         execute(

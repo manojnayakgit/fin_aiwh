@@ -139,7 +139,7 @@ so comparison is a direct field match with no translation layer.
 | 4 Classify | Each divergence gets a severity and a one sentence reason written for a finance reader | Rules table in section 5 |
 | 5 Impact | Attach what it breaks downstream, from dbt lineage | Section 4.6 |
 | 6 Fingerprint | `sha256(dataset, change_type, object, after_state)[:32]` | Same divergence, same id. The idempotency key |
-| 7 Persist | Insert only fingerprints not already `OPEN`, `PROPOSED` or `ESCALATED` | A scheduled run never opens a duplicate issue |
+| 7 Persist | Insert only fingerprints not already `OPEN`, `PROPOSED` or `ESCALATED`. Suppressed events still get their impact refreshed | A scheduled run never opens a duplicate issue, but an event open for a week reports what it breaks today |
 | 8 Log | One row in `META.RUN_LOG`, even when nothing was found | A quiet run is still proof |
 
 Type comparison:
