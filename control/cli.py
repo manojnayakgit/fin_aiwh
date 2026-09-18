@@ -151,7 +151,9 @@ def cmd_detect(args):
             try:
                 content = quality_mod.check_all(conn, measurable)
             except Exception as e:  # noqa: BLE001
-                console.print(f"[yellow]content checks skipped:[/yellow] {str(e).splitlines()[0]}")
+                # Snowflake puts the code on line 1 and the reason on line 2.
+                reason = " ".join(l.strip() for l in str(e).splitlines()[:3] if l.strip())
+                console.print(f"[yellow]content checks skipped:[/yellow] {reason}")
                 console.print("[dim]run ops/20_quality.sql once as ACCOUNTADMIN, or pass --no-quality[/dim]")
         findings += content
 
@@ -432,7 +434,8 @@ def cmd_agent(args):
             quality_rc = _quality_pass(conn, s, contracts, observed, args.dataset, args.dry_run)
         except Exception as e:  # noqa: BLE001
             quality_rc = 0
-            console.print(f"[yellow]content pass skipped:[/yellow] {str(e).splitlines()[0]}")
+            reason = " ".join(l.strip() for l in str(e).splitlines()[:3] if l.strip())
+            console.print(f"[yellow]content pass skipped:[/yellow] {reason}")
     bundles = bundle_events(events, contracts, observed, Lineage.load())
     if args.dataset:
         bundles = [b for b in bundles if b.dataset_key == args.dataset.upper()]
