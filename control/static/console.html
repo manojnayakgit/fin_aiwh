@@ -186,6 +186,8 @@ function breaks(e) {
   if (typeof imp === "string") { try { imp = JSON.parse(imp); } catch { imp = null; } }
   if (!imp) return `<span class="sub">-</span>`;
   if (imp.manifest_seen === false) return `<span class="sub">no manifest</span>`;
+  const reports = (imp.reports || []).map(r => r.label);
+  if (reports.length) return `<span class="BREAKING">${esc(reports.join(", "))}</span>`;
   const marts = imp.marts || [];
   if (marts.length) return `<span class="BREAKING">${esc(marts.join(", "))}</span>`;
   const n = (imp.models || []).length;

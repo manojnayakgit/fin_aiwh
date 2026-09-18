@@ -32,12 +32,13 @@ class Impact:
     models: list[str] = field(default_factory=list)      # staging
     marts: list[str] = field(default_factory=list)       # what people read
     tests: list[str] = field(default_factory=list)
+    reports: list[dict] = field(default_factory=list)    # dbt exposures: what people open
     confidence: str | None = None
     manifest_seen: bool = True
 
     @property
     def empty(self) -> bool:
-        return not (self.models or self.marts or self.tests)
+        return not (self.models or self.marts or self.tests or self.reports)
 
     def summary(self) -> str:
         """One line for a table cell."""
@@ -46,6 +47,8 @@ class Impact:
         if self.empty:
             return "nothing downstream"
         bits = []
+        if self.reports:
+            bits.append(f"{len(self.reports)} report" + ("s" if len(self.reports) > 1 else ""))
         if self.marts:
             bits.append(f"{len(self.marts)} mart" + ("s" if len(self.marts) > 1 else ""))
         if self.models:
@@ -65,6 +68,12 @@ class Impact:
         if self.empty:
             return "_Nothing downstream depends on this yet._"
         lines = []
+        if self.reports:
+            lines.append("**Reports affected** (what people open)")
+            for r in self.reports:
+                who = f" ({r['owner']})" if r.get("owner") else ""
+                lines.append(f"- {r['label']}{who}")
+            lines.append("")
         if self.marts:
             lines.append("**Marts affected** (what people read)")
             lines += [f"- `{m}`" for m in self.marts]
@@ -89,6 +98,7 @@ class Lineage:
         self.manifest = manifest or {}
         self.nodes = self.manifest.get("nodes", {})
         self.sources = self.manifest.get("sources", {})
+        self.exposures = self.manifest.get("exposures", {})
         self.child_map = self.manifest.get("child_map", {})
 
     # -- loading ----------------------------------------------------------
@@ -139,7 +149,19 @@ class Lineage:
         return self.nodes.get(uid, {}).get("name", uid.split(".")[-1])
 
     def _is(self, uid: str, kind: str) -> bool:
+        if kind == "exposure":
+            return uid in self.exposures
         return self.nodes.get(uid, {}).get("resource_type") == kind
+
+    def _report(self, uid: str) -> dict:
+        e = self.exposures.get(uid, {})
+        owner = e.get("owner") or {}
+        return {
+            "name": e.get("name", uid.split(".")[-1]),
+            "label": e.get("label") or e.get("name", uid.split(".")[-1]),
+            "type": e.get("type"),
+            "owner": owner.get("name") or owner.get("email"),
+        }
 
     def _schema(self, uid: str) -> str:
         return (self.nodes.get(uid, {}).get("schema") or "").upper()
@@ -195,4 +217,8 @@ class Lineage:
         marts = sorted({self._name(u) for u in affected
                         if self._is(u, "model") and self._schema(u) == "MARTS"})
         tests = sorted({self._name(u) for u in affected if self._is(u, "test")})
-        return Impact(dataset_key, column, models, marts, tests, confidence)
+        reports = sorted(
+            (self._report(u) for u in affected if self._is(u, "exposure")),
+            key=lambda r: r["label"],
+        )
+        return Impact(dataset_key, column, models, marts, tests, reports, confidence)

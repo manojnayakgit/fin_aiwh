@@ -1,0 +1,43 @@
+version: 2
+
+# What people actually open. Declaring these means impact analysis can say
+# "this breaks the AP aging pack" rather than "this breaks agg_ap_aging".
+# Add one entry per report, dashboard or extract that reads a mart.
+exposures:
+  - name: ap_aging_pack
+    label: AP Aging Pack
+    type: dashboard
+    maturity: high
+    owner: {name: AP Controller, email: ap-controller@example.com}
+    description: Month end AP aging by entity and bucket, reviewed at close.
+    depends_on:
+      - ref('agg_ap_aging')
+      - ref('fct_ap_open_items')
+
+  - name: ar_aging_pack
+    label: AR Aging Pack
+    type: dashboard
+    maturity: high
+    owner: {name: AR Controller, email: ar-controller@example.com}
+    description: Month end AR aging by entity and bucket, reviewed at close.
+    depends_on:
+      - ref('agg_ar_aging')
+      - ref('fct_ar_open_items')
+
+  - name: working_capital_kpis
+    label: Working Capital KPIs
+    type: dashboard
+    maturity: high
+    owner: {name: FP&A Lead, email: fpa@example.com}
+    description: DSO and DPO per entity on the CFO dashboard.
+    depends_on:
+      - ref('kpi_dso_dpo')
+
+  - name: bank_reconciliation_extract
+    label: Bank Reconciliation Extract
+    type: application
+    maturity: medium
+    owner: {name: Treasury Ops, email: treasury@example.com}
+    description: Nightly extract of payments with bank references for reconciliation.
+    depends_on:
+      - ref('fct_ap_open_items')

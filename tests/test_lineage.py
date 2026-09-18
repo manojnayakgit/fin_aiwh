@@ -127,3 +127,38 @@ def test_summary_and_markdown_are_readable(lg):
 def test_impact_serialises_for_storage(lg):
     d = lg.impact("RAW.AP_PAYMENT", "BANK_REF").as_dict()
     assert json.loads(json.dumps(d))["marts"]
+
+
+# --------------------------------------------------------------------------
+# exposures: what people actually open
+# --------------------------------------------------------------------------
+
+def _with_exposure():
+    m = json.loads(json.dumps(MANIFEST))
+    m["exposures"] = {
+        "exposure.p.ap_aging_pack": {
+            "name": "ap_aging_pack", "label": "AP Aging Pack", "type": "dashboard",
+            "owner": {"name": "AP Controller", "email": "ap@x"},
+            "depends_on": {"nodes": ["model.p.agg_ap_aging"]},
+        }
+    }
+    m["child_map"]["model.p.agg_ap_aging"] = ["exposure.p.ap_aging_pack"]
+    return Lineage(m)
+
+
+def test_an_exposure_downstream_of_a_mart_is_reported():
+    i = _with_exposure().impact("RAW.AP_PAYMENT", "BANK_REF")
+    assert [r["label"] for r in i.reports] == ["AP Aging Pack"]
+    assert i.reports[0]["owner"] == "AP Controller"
+    assert "1 report" in i.summary()
+
+
+def test_reports_lead_the_markdown():
+    md = _with_exposure().impact("RAW.AP_PAYMENT", "BANK_REF").markdown()
+    assert md.index("Reports affected") < md.index("Marts affected")
+    assert "AP Aging Pack (AP Controller)" in md
+
+
+def test_a_column_that_never_reaches_the_mart_hits_no_report():
+    i = _with_exposure().impact("RAW.AP_PAYMENT", "PAYMENT_METHOD")
+    assert i.reports == []
