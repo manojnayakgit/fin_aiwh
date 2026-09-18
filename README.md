@@ -4,8 +4,12 @@ An AI enabled finance warehouse for AP and AR subledger data, built contract fir
 
 **New here? Read [docs/KT.md](docs/KT.md).** It covers what this is, the
 architecture, setup from zero, every command, and what is and is not done.
-[docs/BUILD_LOG.md](docs/BUILD_LOG.md) is the chronological record of how it
-was built and why.
+[docs/SCENARIOS.md](docs/SCENARIOS.md) is the evidence register: every failure
+mode, how it was proven, what the agent did. [docs/BUILD_LOG.md](docs/BUILD_LOG.md)
+is the chronological record of how it was built and why.
+[docs/IMPLEMENTATION_GUIDE.md](docs/IMPLEMENTATION_GUIDE.md) is the rebuild:
+every stage with the code that landed, the commands run, and every PR and
+issue, generated from the repository itself.
 
 The warehouse is Snowflake. The transformation layer is dbt. The part that
 matters is neither of those: it is a control plane that sits outside both and

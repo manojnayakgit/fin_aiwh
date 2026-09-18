@@ -13,6 +13,10 @@ ship.
 
 ---
 
+> Four documents. This one is the handover. `SCENARIOS.md` is the evidence
+> register. `BUILD_LOG.md` is the diary. `IMPLEMENTATION_GUIDE.md` is the
+> rebuild, stage by stage, with every code change, command, PR and issue.
+
 ## 1. The problem and the approach
 
 **Problem.** Upstream ERP teams change table shapes without telling anyone. The
