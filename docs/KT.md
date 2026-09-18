@@ -612,6 +612,11 @@ python -m pytest tests -q
 
 ### Working, verified live
 
+Every path in the system has been exercised on the live warehouse with no
+manual step other than clicking Merge. The rerun after the last merge reports
+nothing to do and exits clean.
+
+
 | Area | State |
 |---|---|
 | Detection | 8 contracts, all 7 scenarios classified correctly |
@@ -619,7 +624,8 @@ python -m pytest tests -q
 | Agent | Drafts, verifies, opens PRs and issues, routes correctly, shields breaking drift |
 | Gate | Observed green on an agent-authored shield PR: rule tests, contracts, dbt build |
 | Shields | Two merged live. `dbt build` went from ERROR to `PASS=36` with the drift still open |
-| Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
+| Full cycle, LOW/MEDIUM | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
+| Full cycle, BREAKING | break → issue → shield PR → merged → repair → retire PR → merged → issue closed → sync dismisses |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |

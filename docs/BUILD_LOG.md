@@ -1024,3 +1024,25 @@ happened to be the first rerun.
 
 Both are fixed with one rule: anything that acts on a column consults the live
 schema and the installed shields, never an event's status. Three tests pin it.
+
+
+---
+
+## All eight scenarios closed on the live warehouse
+
+The final run after merging the retirement PRs: `sync` dismissed the two
+repaired events through the closed issues, `dbt build` passed with the guard
+test gone, and `agent` reported nothing to do and exited clean. That last one
+is the rerun that crashed the day before.
+
+Every path the system claims has now been walked end to end on Snowflake, with
+no manual step other than clicking Merge on a pull request the system wrote:
+
+→ safe drift adopted automatically
+→ a table that landed without review brought under contract and made buildable
+→ breaking drift escalated, shielded so reports stayed correct, then retired
+  and closed when the source was repaired
+
+What remains is not detection, drafting or recovery. It is branch protection,
+so the LOW path needs no click at all, and content governance, so the contract
+covers what is in the columns and not only their shape.
