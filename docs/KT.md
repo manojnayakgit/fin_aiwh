@@ -99,7 +99,7 @@ changed" and moves on.
 | Python 3.11 | Detection, classification, agent, console | `control/` |
 | Claude API | Drafting contract changes. Nothing else | `control/agent.py` |
 | GitHub | Contracts under review. PRs and issues are the work queue | `contracts/` |
-| GitHub Actions | Release gate | `.github/workflows/ci.yml` |
+| GitHub Actions | Release gate, scheduled operating cycle | `.github/workflows/ci.yml`, `cycle.yml` |
 | pytest | 62 tests, no warehouse or API needed | `tests/` |
 
 Model: `claude-sonnet-4-5`, override with `ANTHROPIC_MODEL`. Only the agent
@@ -393,7 +393,7 @@ analysis needs.
 
 | Where | What |
 |---|---|
-| Settings → Secrets → Actions | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PRIVATE_KEY` (full `.p8` contents, BEGIN/END included) |
+| Settings → Secrets → Actions | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_PRIVATE_KEY` (full `.p8`, BEGIN/END included), `ANTHROPIC_API_KEY`, `AGENT_GH_TOKEN` |
 | Settings → Branches → `main` | Require checks: `rule tests`, `contracts match warehouse`, `dbt build (CI schema)` |
 
 Branch protection is not optional. `gh pr merge --auto` merges the moment a PR
@@ -429,7 +429,16 @@ python -m control.cli agent
 ```
 
 Order matters. Reconcile what finished, make merged contracts the record,
-compare, act. This is the sequence to schedule.
+compare, act.
+
+**Scheduled.** `.github/workflows/cycle.yml` runs this four times a day and on
+demand (Actions → cycle → Run workflow, with a dry run option). One extra
+secret:
+
+| Secret | Why |
+|---|---|
+| `ANTHROPIC_API_KEY` | the agent drafts in CI |
+| `AGENT_GH_TOKEN` | fine-grained PAT, this repo, contents + pull requests + issues write. GitHub does not run workflows for events caused by `GITHUB_TOKEN`, so without this the gate never runs on agent PRs and auto merge is refused. The run warns if it is missing |
 
 ### Console
 
@@ -507,7 +516,7 @@ python -m pytest tests -q
 | Agent | Drafts, verifies, opens PRs and issues, routes correctly |
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
-| Console, sync, 62 tests | Done |
+| Console, sync, scheduled cycle, 63 tests | Done |
 
 ### Not done
 
@@ -515,7 +524,6 @@ python -m pytest tests -q
 |---|---|
 | Branch protection not configured | Agent refuses auto merge, LOW path needs a human click |
 | Gate never observed running | Workflow and secrets exist, no run watched |
-| Nothing scheduled | Operating cycle is manual |
 | Jira handoff | Deferred |
 
 ### Known limits
@@ -534,7 +542,6 @@ python -m pytest tests -q
 | Priority | Item | Why |
 |---|---|---|
 | 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
-| 2 | Schedule `sync → register → detect → agent` | Proves self-managing literally |
 | 3 | Jira handoff for MEDIUM | Events land in the team's real queue |
 | 4 | Agent remediates BREAKING | Compatibility view, backfill, staged contract with deprecation window |
 | 5 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |

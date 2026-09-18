@@ -1,0 +1,91 @@
+# fin_aiwh operating cycle
+#
+# The self-managing part. On a schedule, with nobody watching:
+#   sync      what finished on GitHub becomes event state
+#   register  merged contracts become the agreement of record
+#   detect    the warehouse is compared against them
+#   agent     safe changes become PRs, dangerous ones become issues
+#
+# Order matters. Any other sequence judges against stale contracts or
+# re-raises work already done.
+#
+# Token: agent PRs must trigger the gate, and GitHub does not run workflows
+# for events caused by GITHUB_TOKEN. So the agent uses AGENT_GH_TOKEN, a
+# fine-grained PAT with contents, pull-requests and issues write on this repo.
+# Without it the cycle still runs, PRs still open, but the gate stays silent
+# on them and auto merge is refused.
+name: cycle
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"      # four times a day, off the hour to avoid the rush
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "detect and agent in dry run, change nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cycle
+  cancel-in-progress: false      # never kill a run mid-PR
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+  SNOWFLAKE_USER: FIN_AIWH_SVC
+  SNOWFLAKE_ROLE: FIN_AIWH_ENG
+  SNOWFLAKE_WAREHOUSE: FIN_AIWH_WH
+  SNOWFLAKE_DATABASE: FIN_AIWH
+  SNOWFLAKE_SCHEMA: META
+  SNOWFLAKE_PRIVATE_KEY_PATH: .secrets/ci_rsa_key.p8
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  GH_TOKEN: ${{ secrets.AGENT_GH_TOKEN || github.token }}
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.AGENT_GH_TOKEN || github.token }}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11", cache: pip}
+      - run: pip install -r requirements.txt
+
+      - name: materialise private key
+        run: |
+          mkdir -p .secrets
+          printf '%s' "${{ secrets.SNOWFLAKE_PRIVATE_KEY }}" > .secrets/ci_rsa_key.p8
+          chmod 600 .secrets/ci_rsa_key.p8
+
+      - name: git identity for agent commits
+        run: |
+          git config user.name  "fin-aiwh agent"
+          git config user.email "fin-aiwh-agent@users.noreply.github.com"
+
+      - name: token check
+        run: |
+          if [ -z "${{ secrets.AGENT_GH_TOKEN }}" ]; then
+            echo "::warning::AGENT_GH_TOKEN not set. PRs opened by this run will not trigger the gate."
+          fi
+
+      - run: python -m control.cli ping
+      - run: python -m control.cli dbt parse --no-version-check
+      - run: python -m control.cli sync
+      - run: python -m control.cli register
+
+      - name: detect
+        run: python -m control.cli detect ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: agent
+        run: python -m control.cli agent ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: status
+        if: always()
+        run: python -m control.cli status
