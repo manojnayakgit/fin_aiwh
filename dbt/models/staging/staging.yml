@@ -50,3 +50,20 @@ models:
       - name: receipt_id
         data_tests: [unique, not_null]
   - name: stg_fx_rate
+  - name: stg_ap_accrual
+    description: "Accounts payable accrual entries for period-end adjustments."
+    columns:
+      - name: accrual_id
+        data_tests: [unique, not_null]
+      - name: entity_code
+        data_tests: [not_null]
+      - name: gl_account
+        data_tests: [not_null]
+      - name: period
+        data_tests: [not_null]
+      - name: accrual_amount
+        data_tests: [not_null]
+      - name: currency_code
+        data_tests: [not_null]
+      - name: loaded_at
+        data_tests: [not_null]
