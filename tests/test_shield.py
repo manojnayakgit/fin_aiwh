@@ -215,3 +215,50 @@ def test_retirement_body_closes_the_issue():
     body = retire_body(r)
     assert f"Closes {ISSUE}" in body
     assert "`BANK_REF`" in body
+
+
+# --------------------------------------------------------- shield idempotency
+# Re-running the agent must never try to shield a column that is already
+# shielded, or one that has stopped diverging. Both produce an identical file
+# and an empty commit, which is how the first live retirement run died.
+
+class _Bundle:
+    def __init__(self, table, events):
+        self.table, self.events, self.contract = table, events, None
+    def dataset_impact(self):
+        return None
+
+
+def _agent_ran(monkeypatch):
+    from control import cli
+    calls = []
+    monkeypatch.setattr(cli, "publish_shield", lambda *a, **k: calls.append(a) or "url")
+    def fake_build(*a, **k):
+        calls.append(("build", a))
+        return Shield(dataset_key="RAW.X", table="X")      # no patches: _shield stops here
+    monkeypatch.setattr(cli.shield_mod, "build", fake_build)
+    return cli, calls
+
+
+def test_a_column_that_no_longer_diverges_is_not_shielded(monkeypatch):
+    cli, calls = _agent_ran(monkeypatch)
+    monkeypatch.setattr(cli.shield_mod, "installed", lambda: [])
+    b = _Bundle("AP_PAYMENT", [ev("RAW.AP_PAYMENT", "COLUMN_REMOVED", "BANK_REF")])
+    cli._shield(b, None, None, active=set())          # live says: nothing diverges
+    assert calls == []
+
+
+def test_an_already_installed_shield_is_not_reapplied(monkeypatch):
+    cli, calls = _agent_ran(monkeypatch)
+    monkeypatch.setattr(cli.shield_mod, "installed", lambda: [("AP_PAYMENT", "BANK_REF", "n")])
+    b = _Bundle("AP_PAYMENT", [ev("RAW.AP_PAYMENT", "COLUMN_REMOVED", "BANK_REF")])
+    cli._shield(b, None, None, active={("AP_PAYMENT", "BANK_REF")})
+    assert calls == []
+
+
+def test_a_live_unshielded_break_still_reaches_the_planner(monkeypatch):
+    cli, calls = _agent_ran(monkeypatch)
+    monkeypatch.setattr(cli.shield_mod, "installed", lambda: [])
+    b = _Bundle("AP_PAYMENT", [ev("RAW.AP_PAYMENT", "COLUMN_REMOVED", "BANK_REF")])
+    cli._shield(b, None, None, active={("AP_PAYMENT", "BANK_REF")})
+    assert calls and calls[0][0] == "build"

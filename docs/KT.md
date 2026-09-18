@@ -622,8 +622,8 @@ python -m pytest tests -q
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
-| Shield retirement | Built and unit tested. Round-trips both live shielded models to their exact pre-shield SQL. Not yet fired live |
-| Console, sync, scheduled cycle, 117 tests | Done |
+| Shield retirement | Fired live: both stale shields detected, PR #8 and PR #9 opened, issues commented. Awaiting merge |
+| Console, sync, scheduled cycle, 120 tests | Done |
 
 ### Not done
 
@@ -668,6 +668,7 @@ contained. Verification does not trust the draft either way.
 | `local 'main' is N commit(s) ahead of origin/main` | The agent branches from `origin/main`, so unpushed local commits would show in the PR diff as deletions | `git push`, then rerun |
 | A publish died and the branch already exists | A run that failed after the push left the branch behind | Nothing. The next run deletes it and recreates from `origin/base` |
 | `gh pr create` fails with no visible reason | Older `_run` hid the subprocess output | Fixed. Failures now print what the command said |
+| `git commit failed: nothing to commit` on a shield | The shield was already merged, or the drift is gone | Fixed. The agent skips both cases and says which |
 
 
 | Symptom | Fix |

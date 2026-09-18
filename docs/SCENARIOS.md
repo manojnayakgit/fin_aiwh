@@ -32,7 +32,7 @@ artifact that proves it happened.
 | 05 | Column dropped | `AP_PAYMENT.BANK_REF` removed | `COLUMN_REMOVED` / BREAKING | **Passed** | issue #3, shield PR #5, merged `72485a8` |
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
 | 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** | PR #1 closed, **PR #7 merged** `99760b0` |
-| 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Built, not merged** | retirement PRs pending live run |
+| 08 | Upstream repaired | `BANK_REF` restored, `STATUS` NOT NULL again | no drift; 2 shields stale | **Built, not merged** | retirement **PR #8**, **PR #9** open |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
@@ -173,7 +173,24 @@ live schema on every run, before it looks at events. For each stale shield it
 opens a `retire/<table>` PR whose body says `Closes <issue>`, and comments on
 the issue. Merging closes the issue; the next `sync` dismisses the event.
 
-**Not yet done.** Firing it against Snowflake and merging the two PRs.
+**Fired live.** `detect` reported both shields stale and the warehouse matching
+every contract. `agent` opened PR #8 (`retire/ap_payment`) and PR #9
+(`retire/ar_invoice`, also deleting the guard test), and commented on issues #3
+and #4.
+
+**What broke.** The same run then died. After retiring, the agent moved to its
+"already escalated" pass, found the AP_PAYMENT event still marked ESCALATED in
+the database, and tried to shield it again. The shield was already on `main`,
+so the rewrite produced an identical file and `git commit` had nothing to
+commit. Two defects, both fixed and unit tested:
+
+→ the escalated pass trusted the event table; it now consults the live schema,
+the same source retirement uses
+
+→ shields never checked whether they were already installed, so any rerun after
+a shield merged would have hit the same wall. That bug predates scenario 08.
+
+**Not yet done.** Merging PR #8 and PR #9, then `sync` to dismiss the events.
 
 ---
 
@@ -374,6 +391,12 @@ failed on `git checkout -b`. Branches are now recreated from `origin/base` and
 force-pushed with a lease, which only ever overwrites the wreckage of an earlier
 run of the same agent.
 
+→ The agent's escalated pass re-shielded a column whose shield was already
+merged, producing an identical file and an empty commit. It consulted the event
+table, which says what was true when the event was raised, instead of the live
+schema, which says what is true now. Both the "already installed" and the
+"no longer diverges" cases are now skipped, with a reason printed.
+
 → `test_all_contracts_parse` asserted `len(contracts) == 8`. The first
 successful onboarding PR added a ninth and failed the gate. A test that breaks
 whenever the product succeeds is measuring the wrong property; it now derives
@@ -417,7 +440,7 @@ the source is fixed, and hides nothing from the control plane.
 
 ## 7. Test inventory
 
-117 tests, no Snowflake connection required, ~2s.
+120 tests, no Snowflake connection required, ~2s.
 
 | File | Tests | Covers |
 |---|---|---|
@@ -425,7 +448,7 @@ the source is fixed, and hides nothing from the control plane.
 | `tests/test_onboard.py` | 27 | source entry, test generation, SQL column parsing, every `verify()` rejection |
 | `tests/test_agent.py` | 26 | proposal verification, bundling, branch protection probe, GitHub outcome reconciliation, publish guards |
 | `tests/test_lineage.py` | 13 | model and column lineage from the dbt manifest, confidence levels |
-| `tests/test_shield.py` | 19 | shield planning, refusal to guess, staleness, retirement inverse and its refusals |
+| `tests/test_shield.py` | 22 | shield planning, refusal to guess, staleness, retirement inverse and its refusals, shield idempotency |
 | `tests/test_ui.py` | 6 | console action allowlist |
 | `tests/test_contracts.py` | 6 | parsing, unique dataset keys, ownership, canonicalisation, hashing |
 

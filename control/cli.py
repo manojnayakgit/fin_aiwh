@@ -239,9 +239,41 @@ def cmd_resolve(args):
     return 0
 
 
-def _shield(b, issue_url, settings):
-    """Try to keep the reports correct while upstream is fixed."""
-    breaking = [e for e in b.events if e["SEVERITY"] == "BREAKING"]
+def _live_active(contracts, observed) -> set[tuple[str, str]]:
+    """(table, column) pairs that diverge right now, from the live schema.
+
+    The event table records what was true when an event was raised. The live
+    schema is what is true now. Anything that acts on a column consults this,
+    never the event's own status.
+    """
+    return {(f.dataset_key.split(".")[-1], (f.object_name or "").upper())
+            for f in diff_all(contracts, observed)}
+
+
+def _shield(b, issue_url, settings, active: set[tuple[str, str]]):
+    """Try to keep the reports correct while upstream is fixed.
+
+    Two things are skipped, and both are idempotency, not policy. A column that
+    no longer diverges live belongs to retirement, not to a fresh shield. A
+    column whose shield is already installed on the base branch would produce
+    an identical file and an empty commit.
+    """
+    installed = {(tb, c) for tb, c, _ in shield_mod.installed()}
+    breaking = []
+    for e in b.events:
+        if e["SEVERITY"] != "BREAKING":
+            continue
+        key = (b.table, (e.get("OBJECT_NAME") or "").upper())
+        if key not in active:
+            console.print(f"  [dim]{key[1] or b.table}: no longer diverges live, "
+                          f"retirement handles it[/dim]")
+            continue
+        if key in installed:
+            console.print(f"  [dim]{key[1]}: already shielded on the base branch[/dim]")
+            continue
+        breaking.append(e)
+    if not breaking:
+        return
     sh = shield_mod.build(breaking, b.contract, issue_url)
     if not sh.patches:
         if sh.unshieldable or sh.errors:
@@ -291,14 +323,12 @@ def _onboard(b, p, dry_run: bool):
     return publish_onboarding(p, ob, di.markdown() if di and not di.empty else None)
 
 
-def _retire_stale(contracts, observed, dataset: str | None, dry_run: bool) -> int:
+def _retire_stale(active: set[tuple[str, str]], dataset: str | None, dry_run: bool) -> int:
     """Open a retirement PR for every shield whose drift is gone.
 
     Judged against the live schema, not the event table. An escalated event can
     outlive the divergence it recorded; the shield's own column is the truth.
     """
-    findings = diff_all(contracts, observed)
-    active = {(f.dataset_key.split(".")[-1], (f.object_name or "").upper()) for f in findings}
     by_table: dict[str, set[str]] = {}
     for table, col, _ in shield_mod.stale(active):
         if dataset and f"RAW.{table}" != dataset.upper():
@@ -339,7 +369,8 @@ def cmd_agent(args):
 
     # Shields whose drift has been repaired come out first. This does not depend
     # on any open event, so it runs even when there is nothing else to do.
-    retired_rc = _retire_stale(contracts, observed, args.dataset, args.dry_run)
+    active = _live_active(contracts, observed)
+    retired_rc = _retire_stale(active, args.dataset, args.dry_run)
 
     if not bundles and args.dry_run:
         console.print("[green]no open drift, nothing to do[/green]")
@@ -364,7 +395,7 @@ def cmd_agent(args):
                 continue
             issue = next((e["RESOLUTION_REF"] for e in pb.events if e.get("RESOLUTION_REF")), None)
             console.print(f"[bold]{pb.dataset_key}[/bold]  already escalated  {issue or ''}")
-            _shield(pb, issue, s)
+            _shield(pb, issue, s, active)
             console.print("")
     for b in bundles:
         di = b.dataset_impact()
@@ -380,7 +411,7 @@ def cmd_agent(args):
             with connect(s) as conn:
                 mark(conn, b.event_ids, "ESCALATED", url)
             console.print(f"  [red]escalated[/red] {url}")
-            _shield(b, url, s)
+            _shield(b, url, s, active)
             console.print("")
             continue
 

@@ -995,3 +995,32 @@ succeeded, which is a pattern to stop writing.
 
 DMFs are in scope for content governance. A probe is written; the edition of
 the account decides the design.
+
+
+---
+
+## Retirement fired live, and found a bug that was always there
+
+Scenario 08 repaired both breakages. `detect` reported the warehouse clean and
+both shields stale. `agent` opened two retirement PRs and commented on both
+issues. The closing half of the BREAKING path works.
+
+Then the same run died, and the reason is more interesting than the retirement.
+
+After retiring, the agent went on to its "already escalated" pass, found the
+AP_PAYMENT event still ESCALATED in the database, and tried to shield it. The
+shield was already on `main`. Rewriting a shielded line with the same shield
+produced the same file, and `git commit` refused an empty commit.
+
+The event table was the wrong thing to consult. It records what was true when
+the event was raised. The live schema records what is true now, and it is what
+retirement had used moments earlier to decide the drift was gone. The two
+passes were reading different clocks.
+
+The second half of the bug has nothing to do with repair. The shield code never
+checked whether a shield was already installed. Any rerun of the agent after a
+shield merged, on any day, would have failed the same way. Scenario 08 just
+happened to be the first rerun.
+
+Both are fixed with one rule: anything that acts on a column consults the live
+schema and the installed shields, never an event's status. Three tests pin it.
