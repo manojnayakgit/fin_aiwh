@@ -21,3 +21,4 @@ sources:
       - name: FX_RATE
         config:
           freshness: null
+      - name: AP_ACCRUAL
