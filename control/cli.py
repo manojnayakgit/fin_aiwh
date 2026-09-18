@@ -324,28 +324,55 @@ def cmd_sync(args):
 
 def cmd_status(_args):
     with connect() as conn:
-        rows = query(conn, "SELECT * FROM META.OPEN_DRIFT")
         contracts = query(
             conn,
-            "SELECT CONTRACT_KEY, VERSION, REGISTERED_AT FROM META.ACTIVE_CONTRACT "
-            "ORDER BY CONTRACT_KEY",
+            "SELECT CONTRACT_KEY, VERSION FROM FIN_AIWH.META.ACTIVE_CONTRACT ORDER BY CONTRACT_KEY",
         )
+        events = query(
+            conn,
+            """
+            SELECT DATASET_KEY, OBJECT_NAME, CHANGE_TYPE, SEVERITY, STATUS,
+                   RESOLUTION_REF, IMPACT:marts AS MARTS
+            FROM FIN_AIWH.META.DRIFT_EVENT
+            WHERE STATUS IN ('OPEN', 'PROPOSED', 'ESCALATED')
+            ORDER BY CASE STATUS WHEN 'OPEN' THEN 0 WHEN 'ESCALATED' THEN 1 ELSE 2 END,
+                     CASE SEVERITY WHEN 'BREAKING' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END,
+                     DATASET_KEY, OBJECT_NAME
+            """,
+        )
+
     console.print(f"[bold]{len(contracts)} active contracts[/bold]")
     for c in contracts:
         console.print(f"  v{c['VERSION']}  {c['CONTRACT_KEY']}")
-    console.print(f"\n[bold]{len(rows)} open drift events[/bold]")
-    for r in rows:
-        marts = r.get("AFFECTED_MARTS")
-        if isinstance(marts, str):
+
+    def marts_of(r):
+        m = r.get("MARTS")
+        if isinstance(m, str):
             try:
-                marts = json.loads(marts)
+                m = json.loads(m)
             except (json.JSONDecodeError, TypeError):
-                marts = None
+                m = None
+        return m or []
+
+    def line(r):
+        marts = marts_of(r)
         breaks = f"  [dim]breaks {', '.join(marts)}[/dim]" if marts else ""
-        console.print(
-            f"  [{SEV_STYLE[r['SEVERITY']]}]{r['SEVERITY']:<8}[/] "
-            f"{r['DATASET_KEY']}.{r['OBJECT_NAME'] or '*'}  {r['CHANGE_TYPE']}{breaks}"
-        )
+        ref = f"  [dim]{r['RESOLUTION_REF']}[/dim]" if r.get("RESOLUTION_REF") else ""
+        return (f"  [{SEV_STYLE[r['SEVERITY']]}]{r['SEVERITY']:<8}[/] "
+                f"{r['DATASET_KEY']}.{r['OBJECT_NAME'] or '*'}  {r['CHANGE_TYPE']}{breaks}{ref}")
+
+    groups = [
+        ("OPEN", "open, waiting for triage"),
+        ("ESCALATED", "escalated, issue open"),
+        ("PROPOSED", "proposed, pull request open"),
+    ]
+    for status, label in groups:
+        rows = [r for r in events if r["STATUS"] == status]
+        console.print(f"\n[bold]{len(rows)} {label}[/bold]")
+        for r in rows:
+            console.print(line(r))
+    if not events:
+        console.print("\n[green]nothing in flight. the warehouse matches every registered contract.[/green]")
     return 0
 
 
