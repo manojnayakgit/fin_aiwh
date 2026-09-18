@@ -792,3 +792,40 @@ column, because its branch predated that merge and the build is project wide.
 Merging main into the branch cleared it. Two fixes on the roadmap: require
 branches to be up to date, or open a single shield PR covering every
 unbuildable dataset at once.
+
+---
+
+## Onboarding: a contract was never enough
+
+An ungoverned table used to end in a v1 contract PR and nothing else. Merging
+it changed nothing anyone could use: the table was still not a dbt source, had
+no staging model and no tests. The contract described a table the project still
+could not read.
+
+Onboarding finishes the job. One PR carries the contract, the `sources.yml`
+entry, `stg_<table>.sql` and the tests the contract already justifies.
+
+The split is the interesting part. Two things need reading and judgement, and a
+model does them: the contract descriptions, and which columns deserve `upper`,
+`trim` or `nullif(trim(x), '')`. Two things are mechanical, and code does them:
+the source entry is one line at the existing indent, and the tests come
+straight out of the contract's primary key and nullability — `unique, not_null`
+on the key, `not_null` on anything declared not nullable. Nothing invented.
+
+Then code checks the model's SQL before it reaches git: the output column set
+must equal the contract exactly, every key column must be present, it must read
+`source('raw', '<TABLE>')`, and `select *` is refused. A derived column is a
+rejection, not a bonus — business logic added at onboarding time is business
+logic nobody reviewed.
+
+**No mart is wired up, deliberately.** Where a new dataset belongs in the
+reporting layer has accounting consequences. The PR says where the agent thinks
+it belongs and stops there.
+
+**Two defects found by writing the tests.** The column parser split the select
+list on every comma, so `nullif(trim(x), '')` looked like two columns; it now
+tracks bracket depth. And it stripped comments per item *after* splitting, so
+the prose comma in a shield's `-- shield: … restored as NULL, see <issue>`
+swallowed the next column. Comments are stripped first now. A regression test
+walks every pass-through staging model in the repo and asserts it still carries
+its whole contract.

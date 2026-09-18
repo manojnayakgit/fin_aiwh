@@ -610,3 +610,132 @@ def publish_shield(sh, issue_url: str | None, impact_md: str | None, base: str |
         return url
     finally:
         _run(["git", "checkout", "-q", base])
+
+
+# --------------------------------------------------------------------------
+# onboarding a new source
+#
+# A contract alone leaves the table unusable: not declared as a dbt source, no
+# staging model, no tests. Onboarding produces all four artifacts in one PR.
+# The contract and the staging model are drafted by the model; the source
+# entry, the tests and every check on the result are deterministic code.
+# --------------------------------------------------------------------------
+
+ONBOARD_TOOL = "propose_staging_model"
+
+ONBOARD_TOOL_SCHEMA = {
+    "name": ONBOARD_TOOL,
+    "description": "Return a dbt staging model over a newly contracted raw table.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "staging_sql": {
+                "type": "string",
+                "description": "Complete dbt model file. One select over the raw source, "
+                               "one output column per contracted column, same names.",
+            },
+            "notes": {
+                "type": "string",
+                "description": "Two or three sentences for the reviewer: what this table "
+                               "appears to hold, which mart it might belong to and why you "
+                               "did not wire it, anything you had to guess.",
+            },
+        },
+        "required": ["staging_sql", "notes"],
+    },
+}
+
+ONBOARD_SYSTEM = """You write dbt staging models for a finance data warehouse. A new raw
+table has just been put under contract. Write the staging model that makes it usable.
+
+The staging layer normalises, it does not interpret. Rules you must follow exactly:
+- Output exactly one column per column in the contract, with the contract's own name
+  in lower case. No extra columns, no derived or calculated columns, none dropped.
+  A reviewer adds business logic later; inventing it here hides it from review.
+- Read from {{ source('raw', 'TABLE') }} and nothing else. No joins, no ref().
+- Never use select *. The column list is what a reviewer reads.
+- Clean only where the column's own type and meaning justify it: upper() on codes,
+  statuses and currencies, trim() on free text, nullif(trim(x), '') where an empty
+  string is really a missing value. Leave amounts, dates, ids and flags untouched:
+  casting or rounding money in staging is a business decision.
+- Do not wire the table into any mart. Say in notes where you think it belongs.
+"""
+
+
+def build_onboard_prompt(contract_yaml: str, observed: dict[str, ObservedColumn],
+                         table: str, example_model: str) -> str:
+    return "\n".join([
+        f"Raw table: RAW.{table}", "",
+        "Its contract, merged in this same pull request:", "```yaml", contract_yaml, "```", "",
+        "Live schema from INFORMATION_SCHEMA:", _observed_json(observed), "",
+        "An existing staging model in this project, for style:", "```sql", example_model, "```", "",
+        f"Call {ONBOARD_TOOL} with the staging model for this table.",
+    ])
+
+
+def draft_staging(contract_yaml: str, observed: dict[str, ObservedColumn], table: str,
+                  client=None, model: str | None = None) -> tuple[str, str]:
+    """Ask the model for the staging SQL. Returns (staging_sql, notes), unverified."""
+    if client is None:
+        try:
+            import anthropic
+        except ImportError:
+            raise SystemExit(
+                "the anthropic package is not installed. Run: pip install -r requirements.txt"
+            )
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            raise SystemExit("ANTHROPIC_API_KEY is not set. Add it to .env")
+        client = anthropic.Anthropic()
+    model = model or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+
+    example = (ROOT / "dbt" / "models" / "staging" / "stg_ap_vendor.sql").read_text()
+    msg = client.messages.create(
+        model=model,
+        max_tokens=3000,
+        system=ONBOARD_SYSTEM,
+        tools=[ONBOARD_TOOL_SCHEMA],
+        tool_choice={"type": "tool", "name": ONBOARD_TOOL},
+        messages=[{"role": "user",
+                   "content": build_onboard_prompt(contract_yaml, observed, table, example)}],
+    )
+    block = next(b for b in msg.content if getattr(b, "type", "") == "tool_use")
+    return block.input["staging_sql"], block.input.get("notes", "")
+
+
+def publish_onboarding(proposal: Proposal, ob, impact_md: str | None,
+                       base: str | None = None) -> str:
+    """Contract, source entry, staging model and tests in one PR. Never auto merges."""
+    from .onboard import SCHEMA, SOURCES, pr_body, pr_title
+    assert proposal.ok and proposal.contract and ob.ok
+    _ensure_clean_tree()
+    _ensure_labels()
+    subprocess.run(["gh", "label", "create", "onboard", "--color", "0E8A16",
+                    "--description", "brings an ungoverned table under contract", "--force"],
+                   cwd=ROOT, capture_output=True, text=True)
+    base = base or _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    existing = existing_pr(ob.branch)
+    if existing:
+        return existing
+    _run(["git", "fetch", "-q", "origin", base])
+    try:
+        _run(["git", "checkout", "-q", "-b", ob.branch, f"origin/{base}"])
+        proposal.contract_path.write_text(proposal.contract_yaml)
+        ob.staging_path.write_text(ob.staging_sql)
+        SOURCES.write_text(ob.sources_after)
+        SCHEMA.write_text(ob.schema_after)
+        files = [str(p.relative_to(ROOT)) for p in
+                 (proposal.contract_path, ob.staging_path, SOURCES, SCHEMA)]
+        _run(["git", "add", *files])
+        title = pr_title(ob)
+        body = (f"{pr_body(ob, proposal.contract, impact_md)}\n\n---\n"
+                f"Agent reasoning: {proposal.reasoning}\n\n"
+                f"Drift events: {', '.join(proposal.bundle.event_ids)}\n")
+        _run(["git", "commit", "-q", "-m", title, "-m", body])
+        _run(["git", "push", "-q", "-u", "origin", ob.branch])
+        return _run([
+            "gh", "pr", "create", "--title", title, "--body", body,
+            "--base", base, "--head", ob.branch,
+            "--label", "drift", "--label", "medium", "--label", "onboard",
+        ]).splitlines()[-1]
+    finally:
+        _run(["git", "checkout", "-q", base])

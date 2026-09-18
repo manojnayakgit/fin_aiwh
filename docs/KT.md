@@ -181,7 +181,7 @@ event can still be read against the March contract.
 | Step | What |
 |---|---|
 | Bundle | Group open events by dataset. Route on the **worst** event, because you cannot adopt half a dataset |
-| Route | BREAKING → issue, events `ESCALATED`, then a **shield PR** (4.5). LOW or MEDIUM → draft, verify, PR, events `PROPOSED` |
+| Route | BREAKING → issue, events `ESCALATED`, then a **shield PR** (4.5). No contract at all → **onboarding PR** (4.9). Otherwise LOW or MEDIUM → draft, verify, PR, events `PROPOSED` |
 | Draft | Claude receives: events as JSON, live schema as JSON, current contract, current staging model, downstream impact. Replies through a **forced tool call** with a fixed schema: `contract_yaml`, `staging_sql`, `pr_title`, `pr_body`, `reasoning`. Structured data, nothing to parse |
 | Verify | Reject if: YAML fails to parse, dataset renamed, version ≠ old+1, any contracted column dropped, primary key changed, **proposal still diverges from live schema**, staging no longer reads `source('raw', ...)` |
 | Publish | Fetch, branch from `origin/main` (never local HEAD), write contract and optional staging model, commit, push, `gh pr create` with `drift` + severity labels |
@@ -285,7 +285,50 @@ through arithmetic and the enforced contract would otherwise fail.
 mart contract protects output shape; it cannot see that input lost meaning.
 Only the source contract catches that. dbt is not a second safety net here.
 
-### 4.9 Event lifecycle
+### 4.9 Onboarding a new source
+
+A table landing in `RAW` with no contract is `DATASET_UNGOVERNED`, MEDIUM. A
+contract alone does not make it usable: it is still not declared as a dbt
+source, has no staging model and no tests. Onboarding ships all four in one
+pull request.
+
+`control/onboard.py`, reached from `agent` whenever a bundle has no contract.
+
+| Artifact | Who writes it | Why that side |
+|---|---|---|
+| `contracts/raw/<table>.yml`, v1 | model | descriptions and the key need reading the column names |
+| entry in `sources.yml` | code | one line at the existing indent, no judgement |
+| `stg_<table>.sql` | model | which codes to `upper`, what to `trim`, what is really a missing value |
+| tests in `staging.yml` | code | the contract already states the key and which columns are not null |
+
+Two forced tool calls, one after the other: `propose_contract_change` gives
+the contract, then `propose_staging_model` gives the SQL with the contract and
+the live schema in front of it. An existing model, `stg_ap_vendor.sql`, goes in
+as the style example.
+
+Then code checks the model's work before anything is pushed:
+
+| Check | Rejects |
+|---|---|
+| column set equals the contract exactly | a dropped column, or a derived one nobody asked for |
+| every primary key column present | a model that cannot be joined |
+| reads `source('raw', '<TABLE>')` | a model pointed at the wrong table |
+| no `select *` | a column list a reviewer cannot read |
+
+Tests come only from what the contract already asserts: `unique, not_null` on
+the key, `not_null` on any column declared not nullable. Nothing invented.
+
+**No mart is wired up.** Where a new dataset belongs in the reporting layer is
+a modelling decision with accounting consequences. The PR says where the agent
+thinks it belongs and leaves it to a reviewer. Labelled `onboard`, never auto
+merged.
+
+```
+python -m control.cli agent --dataset RAW.AP_ACCRUAL --dry-run
+python -m control.cli agent --dataset RAW.AP_ACCRUAL
+```
+
+### 4.10 Event lifecycle
 
 ```
 detect ─► OPEN ─┬─► PROPOSED ─► MERGED
@@ -557,7 +600,8 @@ python -m pytest tests -q
 | Shields | Two merged live. `dbt build` went from ERROR to `PASS=36` with the drift still open |
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
-| Console, sync, scheduled cycle, 75 tests | Done |
+| Onboarding | Ungoverned table → contract, source entry, staging model and tests in one PR, column set verified |
+| Console, sync, scheduled cycle, 95 tests | Done |
 
 ### Not done
 

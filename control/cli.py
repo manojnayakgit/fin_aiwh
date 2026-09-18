@@ -16,12 +16,13 @@ from .detect import (
     BREAKING, MEDIUM, attach_impact, diff_all, fetch_observed, new_run_id, persist,
     snapshot_observed,
 )
-from .agent import (BREAKING as _B, breaking_events, bundle_events, draft, escalate,
-                    github_outcome, mark, open_events, pending_events, publish,
-                    publish_shield, set_status, verify)
+from .agent import (BREAKING as _B, breaking_events, bundle_events, draft, draft_staging,
+                    escalate, github_outcome, mark, open_events, pending_events, publish,
+                    publish_onboarding, publish_shield, set_status, verify)
 from .lineage import Lineage
 from .load import load_all
 from .register import register
+from . import onboard as onboard_mod
 from . import shield as shield_mod
 from .snow import connect, execute, execute_script, query
 
@@ -257,6 +258,36 @@ def _shield(b, issue_url, settings):
         console.print(f"  [dim]not shielded: {u}[/dim]")
 
 
+DRY = "dry-run"
+
+
+def _onboard(b, p, dry_run: bool):
+    """An ungoverned table needs more than a contract to be usable.
+
+    The contract says what the table is. The source entry, the staging model and
+    the tests are what let anything read it. All four land in one PR, and the
+    column list of the staging model is checked against the contract before the
+    PR is opened.
+    """
+    sql, notes = draft_staging(p.contract_yaml, b.observed, b.table)
+    ob = onboard_mod.build(p.contract, sql, notes)
+    if not ob.ok:
+        console.print("  [red]staging model rejected by verification:[/red]")
+        for e in ob.errors:
+            console.print(f"    {e}")
+        return None
+    console.print(f"  onboarding: contract v{p.contract.version}, source entry, "
+                  f"[bold]{ob.model_name}[/bold], "
+                  f"{len(onboard_mod.tests_for(p.contract))} tested column(s)")
+    console.print(f"  [dim]{notes}[/dim]")
+    if dry_run:
+        console.print("  [dim]dry run, printing staging model:[/dim]")
+        console.print(ob.staging_sql)
+        return DRY
+    di = b.dataset_impact()
+    return publish_onboarding(p, ob, di.markdown() if di and not di.empty else None)
+
+
 def cmd_agent(args):
     s = load_settings()
     contracts = load_contracts()
@@ -316,6 +347,23 @@ def cmd_agent(args):
             for e in p.errors:
                 console.print(f"    {e}")
             console.print("")
+            continue
+
+        # No contract at all means the table is not modelled either. Onboarding
+        # ships the contract together with everything needed to build on it.
+        if b.contract is None:
+            url = _onboard(b, p, args.dry_run)
+            if url is None:
+                rc = 1
+                console.print("")
+                continue
+            if url is DRY:
+                console.print("")
+                continue
+            with connect(s) as conn:
+                mark(conn, b.event_ids, "PROPOSED", url)
+            console.print(f"  [green]onboarding PR[/green] {url}")
+            console.print("  [dim]review required, never auto merged[/dim]\n")
             continue
 
         console.print(f"  proposal: [bold]{p.pr_title}[/bold]  → contract v{p.contract.version}"
