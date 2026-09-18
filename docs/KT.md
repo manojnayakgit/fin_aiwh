@@ -608,7 +608,7 @@ python -m pytest tests -q
 | Shields | Two merged live. `dbt build` went from ERROR to `PASS=36` with the drift still open |
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
-| Onboarding | Ungoverned table → contract, source entry, staging model and tests in one PR, column set verified |
+| Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Console, sync, scheduled cycle, 107 tests | Done |
 
 ### Not done

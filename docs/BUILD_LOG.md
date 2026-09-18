@@ -941,3 +941,20 @@ literal string `unassigned`, so the check passed while the dataset was in fact
 ownerless. The rule is now explicit: an owner must be non-empty, and the only
 permitted `unassigned*` value is the onboarding marker the agent is required to
 use, which a reviewer replaces before merge.
+
+
+## PR #7 merged: the loop closes on a table the system had never seen
+
+`RAW.AP_ACCRUAL` landed in the warehouse without review. The system found it,
+put it under contract, made it buildable, and merged the result through its own
+release gate. Four artifacts, one pull request, no hand editing.
+
+The merged staging model differs from the dry run in one place: it uppercases
+`GL_ACCOUNT` as well as entity and currency. Period, amount and timestamp are
+untouched, which is the rule the system prompt states and the reason the model is
+allowed to write this file at all. It declined to wire a mart and said where it
+thought the table belonged, which is the boundary the design draws on purpose.
+
+Seven scenarios, all fired live, all now resolved or shielded. The remaining work
+is not detection or drafting. It is the retirement path for shields, and the
+branch protection that would let the LOW path merge without a human click.

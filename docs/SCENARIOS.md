@@ -31,13 +31,13 @@ artifact that proves it happened.
 | 04 | Money scale changed | `AP_INVOICE` amounts NUMBER(18,2) → (18,4) | `TYPE_CHANGED` / BREAKING | **Passed** | no PR by design, BREAKING never auto-adopts |
 | 05 | Column dropped | `AP_PAYMENT.BANK_REF` removed | `COLUMN_REMOVED` / BREAKING | **Passed** | issue #3, shield PR #5, merged `72485a8` |
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
-| 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** (detection) / **Built, not merged** (onboarding) | PR #1 closed, **PR #7** open |
+| 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** | PR #1 closed, **PR #7 merged** `99760b0` |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
 
-7 scenario scripts, all re-runnable, all fired live. 3 further rules covered by
-unit test with no live script.
+7 scenario scripts, all re-runnable, all fired live, all seven now resolved or
+shielded end to end. 3 further rules covered by unit test with no live script.
 
 ---
 
@@ -237,7 +237,7 @@ to date, or open one shield PR covering every unbuildable dataset at once.
 
 ---
 
-### 07 — New ungoverned source · **Passed** (detection) / **Built, not merged** (onboarding)
+### 07 — New ungoverned source · **Passed**
 
 **Change.** The close automation team created `RAW.AP_ACCRUAL`, 7 columns, 400
 rows, no contract, no review.
@@ -285,13 +285,15 @@ table belonged. That last part is the designed boundary: where a new dataset
 sits in the reporting layer has accounting consequences, so the PR says what the
 agent thinks and stops.
 
-**Status.** Live. **PR #7**, *"Onboard RAW.AP_ACCRUAL: contract, source,
-staging model and tests"*, opened by the agent with all four artifacts.
+**Merged.** `99760b0`, PR #7. All four artifacts are on `main`: the v1
+contract, the `sources.yml` entry, `stg_ap_accrual.sql`, and seven tested columns
+in `staging.yml`.
 
-The first publish attempt failed and exposed three defects in the publish path,
-all fixed and described in section 4. The gate then failed the PR itself on a
-test that asserted a hard contract count, which is a test that breaks whenever
-onboarding succeeds. Also fixed. Awaiting review and merge.
+Getting there cost four defects, none of them in the model's output. Three were
+in the publish path and one was in the test suite, all described in section 4.
+The merged staging model uppercases the three code columns, including
+`GL_ACCOUNT` which the dry run had left alone, and leaves period, amount and
+timestamp untouched.
 
 ---
 
@@ -356,7 +358,7 @@ As of the last `sync`, four events open or escalated:
 
 | Dataset | Column | Status | Scenario |
 |---|---|---|---|
-| `RAW.AP_ACCRUAL` | (dataset) | OPEN, 2 events | 07, awaiting the onboarding PR |
+| `RAW.AP_ACCRUAL` | (dataset) | PROPOSED → MERGED after `sync` | 07, PR #7 merged |
 | `RAW.AP_PAYMENT` | `BANK_REF` | ESCALATED | 05, issue #3 open, shielded |
 | `RAW.AR_INVOICE` | `REVENUE_STREAM` | ESCALATED | 02, with the bundle |
 | `RAW.AR_INVOICE` | `STATUS` | ESCALATED | 06, issue #4 open, shielded |
