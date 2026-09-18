@@ -910,3 +910,34 @@ Known consequence: the merged pull requests reference commit SHAs that no longer
 exist on `main`. The PRs and their discussion remain readable, but their commit
 links are orphaned. That is the unavoidable cost of rewriting history, and it is
 worth stating rather than discovering later.
+
+
+---
+
+## The gate failed the first onboarding PR, correctly, for the wrong reason
+
+PR #7 opened cleanly: contract, source entry, staging model, tests. The gate
+went red on `rule tests`, one failure out of 106:
+
+```
+assert len(contracts) == 8
+AssertionError: assert 9 == 8
+```
+
+`test_all_contracts_parse` asserted a hard count. Onboarding a new source is the
+thing this system exists to do, so the test failed precisely because the system
+worked. Any test that has to be edited every time the product succeeds is
+measuring the wrong property.
+
+It now derives the expected count from the contract directory listing and
+asserts the core AP/AR datasets are present by name. Adding a ninth contract
+passes. Deleting a contract file, or shipping two contracts claiming the same
+dataset, still fails.
+
+Fixing it surfaced a second hole that had been passing by luck.
+`test_every_contract_has_a_primary_key_and_owner` asserted `owner != "unassigned"`.
+The agent sets `unassigned-needs-review` on a brand new dataset, which is not the
+literal string `unassigned`, so the check passed while the dataset was in fact
+ownerless. The rule is now explicit: an owner must be non-empty, and the only
+permitted `unassigned*` value is the onboarding marker the agent is required to
+use, which a reviewer replaces before merge.

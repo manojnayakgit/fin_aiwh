@@ -609,7 +609,7 @@ python -m pytest tests -q
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
 | Onboarding | Ungoverned table → contract, source entry, staging model and tests in one PR, column set verified |
-| Console, sync, scheduled cycle, 106 tests | Done |
+| Console, sync, scheduled cycle, 107 tests | Done |
 
 ### Not done
 

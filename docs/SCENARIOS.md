@@ -31,7 +31,7 @@ artifact that proves it happened.
 | 04 | Money scale changed | `AP_INVOICE` amounts NUMBER(18,2) → (18,4) | `TYPE_CHANGED` / BREAKING | **Passed** | no PR by design, BREAKING never auto-adopts |
 | 05 | Column dropped | `AP_PAYMENT.BANK_REF` removed | `COLUMN_REMOVED` / BREAKING | **Passed** | issue #3, shield PR #5, merged `72485a8` |
 | 06 | Nullability relaxed | `AR_INVOICE.STATUS` NOT NULL dropped | `NULLABILITY_RELAXED` / BREAKING | **Passed** | issue #4, shield PR #6, merged `3a6c350` |
-| 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** (detection) / **Built, not merged** (onboarding) | PR #1 closed, onboarding dry run verified |
+| 07 | New ungoverned source | `RAW.AP_ACCRUAL` created, no contract | `DATASET_UNGOVERNED` / MEDIUM | **Passed** (detection) / **Built, not merged** (onboarding) | PR #1 closed, **PR #7** open |
 | — | Contracted table missing | table dropped entirely | `DATASET_MISSING` / BREAKING | **Rule only** | `test_missing_table_is_breaking` |
 | — | Type narrowed | VARCHAR 128 → 64 | `TYPE_CHANGED` / BREAKING | **Rule only** | `test_narrowing_text_is_breaking` |
 | — | Nullability tightened | nullable → NOT NULL | `NULLABILITY_TIGHTENED` / MEDIUM | **Rule only** | `test_tightened_nullability_is_medium` |
@@ -285,9 +285,13 @@ table belonged. That last part is the designed boundary: where a new dataset
 sits in the reporting layer has accounting consequences, so the PR says what the
 agent thinks and stops.
 
-**Status.** Code complete, 27 tests, dry run clean. The first live publish
-attempt failed and exposed two defects in the publish path, both now fixed and
-described in section 4. The PR has not been opened yet.
+**Status.** Live. **PR #7**, *"Onboard RAW.AP_ACCRUAL: contract, source,
+staging model and tests"*, opened by the agent with all four artifacts.
+
+The first publish attempt failed and exposed three defects in the publish path,
+all fixed and described in section 4. The gate then failed the PR itself on a
+test that asserted a hard contract count, which is a test that breaks whenever
+onboarding succeeds. Also fixed. Awaiting review and merge.
 
 ---
 
@@ -337,6 +341,13 @@ failed on `git checkout -b`. Branches are now recreated from `origin/base` and
 force-pushed with a lease, which only ever overwrites the wreckage of an earlier
 run of the same agent.
 
+→ `test_all_contracts_parse` asserted `len(contracts) == 8`. The first
+successful onboarding PR added a ninth and failed the gate. A test that breaks
+whenever the product succeeds is measuring the wrong property; it now derives
+the count from the directory listing. The same fix exposed an owner check that
+compared against the literal `"unassigned"` while the agent writes
+`"unassigned-needs-review"`, so an ownerless dataset had been passing.
+
 ---
 
 ## 5. Current live state
@@ -372,7 +383,7 @@ the source is fixed, and hides nothing from the control plane.
 
 ## 7. Test inventory
 
-106 tests, no Snowflake connection required, ~2s.
+107 tests, no Snowflake connection required, ~2s.
 
 | File | Tests | Covers |
 |---|---|---|
@@ -382,7 +393,7 @@ the source is fixed, and hides nothing from the control plane.
 | `tests/test_lineage.py` | 13 | model and column lineage from the dbt manifest, confidence levels |
 | `tests/test_shield.py` | 9 | shield planning, refusal to guess, staleness detection |
 | `tests/test_ui.py` | 6 | console action allowlist |
-| `tests/test_contracts.py` | 5 | parsing, canonicalisation, hashing |
+| `tests/test_contracts.py` | 6 | parsing, unique dataset keys, ownership, canonicalisation, hashing |
 
 ```
 python -m pytest tests/ -q
