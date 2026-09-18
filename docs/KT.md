@@ -137,7 +137,7 @@ so comparison is a direct field match with no translation layer.
 | 2 Snapshot | Write every column to `META.OBSERVED_SCHEMA` with a run id | Evidence for "what did it look like on the 3rd" |
 | 3 Diff | For each contract: compare every declared column, then flag undeclared ones | Then any RAW table with no contract → `DATASET_UNGOVERNED` |
 | 4 Classify | Each divergence gets a severity and a one sentence reason written for a finance reader | Rules table in section 5 |
-| 5 Impact | Attach what it breaks downstream, from dbt lineage | Section 4.6 |
+| 5 Impact | Attach what it breaks downstream, from dbt lineage | Section 4.7 |
 | 6 Fingerprint | `sha256(dataset, change_type, object, after_state)[:32]` | Same divergence, same id. The idempotency key |
 | 7 Persist | Insert only fingerprints not already `OPEN`, `PROPOSED` or `ESCALATED`. Suppressed events still get their impact refreshed | A scheduled run never opens a duplicate issue, but an event open for a week reports what it breaks today |
 | 8 Log | One row in `META.RUN_LOG`, even when nothing was found | A quiet run is still proof |
@@ -181,7 +181,7 @@ event can still be read against the March contract.
 | Step | What |
 |---|---|
 | Bundle | Group open events by dataset. Route on the **worst** event, because you cannot adopt half a dataset |
-| Route | BREAKING → issue, events `ESCALATED`. LOW or MEDIUM → draft, verify, PR, events `PROPOSED` |
+| Route | BREAKING → issue, events `ESCALATED`, then a **shield PR** (4.5). LOW or MEDIUM → draft, verify, PR, events `PROPOSED` |
 | Draft | Claude receives: events as JSON, live schema as JSON, current contract, current staging model, downstream impact. Replies through a **forced tool call** with a fixed schema: `contract_yaml`, `staging_sql`, `pr_title`, `pr_body`, `reasoning`. Structured data, nothing to parse |
 | Verify | Reject if: YAML fails to parse, dataset renamed, version ≠ old+1, any contracted column dropped, primary key changed, **proposal still diverges from live schema**, staging no longer reads `source('raw', ...)` |
 | Publish | Fetch, branch from `origin/main` (never local HEAD), write contract and optional staging model, commit, push, `gh pr create` with `drift` + severity labels |
@@ -196,7 +196,38 @@ System prompt constraints: bump version by exactly one, describe live schema
 exactly, never remove a live column, keep existing descriptions, mark inferred
 descriptions as inferred, invent no business rules.
 
-### 4.5 Sync
+
+### 4.5 Shields: keeping reports correct over breaking drift
+
+An issue tells people something is wrong. It does not make the aging pack
+right again. A shield does, while the source is fixed.
+
+`control/shield.py`. Fully deterministic: the transformations are mechanical
+and a wrong one on a finance mart costs more than a model's fluency is worth.
+
+| Breaking change | Shield in the staging model | Honest about |
+|---|---|---|
+| `COLUMN_REMOVED` | `null::<contracted type> as col` | values are gone until upstream restores them |
+| `TYPE_CHANGED` | `cast(<original expression> as <contracted type>) as col` | rounding or truncation |
+| `NULLABILITY_RELAXED` | pass through, plus a singular test that fails on any null | nothing filled in, the build fails so a human sees it |
+| `DATASET_MISSING` | none, nothing to shield | |
+
+| Rule | Why |
+|---|---|
+| Edits only the select line for that column | the original expression is preserved inside the cast |
+| Refuses if the line cannot be found | never guesses at SQL |
+| Contract unchanged, drift stays open, issue stays open | a shield hides nothing from the control plane |
+| Never auto merges | labelled `shield` + `breaking`, a human merges |
+| Every shield line carries `-- shield: … see <issue>` | `detect` warns when a shield's drift is gone, so it gets removed |
+| Follows an issue opened on an earlier run | escalated events with no shield PR get one next cycle |
+
+The gate is the verification: `dbt build -t ci` with mart contracts enforced
+must pass on the shield PR, which is exactly what a correct shield restores.
+
+Removing a shield when upstream is fixed is manual today. Staged contract
+changes with a deprecation window are the next step.
+
+### 4.6 Sync
 
 `python -m control.cli sync` reads each `PROPOSED` or `ESCALATED` event's
 stored URL and asks GitHub what happened.
@@ -212,7 +243,7 @@ stored URL and asks GitHub what happened.
 Without `sync`, a merged PR leaves events `PROPOSED` forever and the detector
 stays silent about that dataset.
 
-### 4.6 Impact analysis
+### 4.7 Impact analysis
 
 `control/lineage.py`. Turns "BANK_REF dropped" into "BANK_REF dropped, breaks
 `fct_ap_open_items`, `agg_ap_aging`, `kpi_dso_dpo`".
@@ -237,7 +268,7 @@ headline, PR "Downstream impact" section, and the agent prompt.
 Limits: needs `dbt parse` to have run. Column match is textual, errs toward
 over reporting. A consumer not declared as an exposure is invisible.
 
-### 4.7 dbt layer
+### 4.8 dbt layer
 
 | Layer | Models | Purpose |
 |---|---|---|
@@ -254,7 +285,7 @@ through arithmetic and the enforced contract would otherwise fail.
 mart contract protects output shape; it cannot see that input lost meaning.
 Only the source contract catches that. dbt is not a second safety net here.
 
-### 4.8 Event lifecycle
+### 4.9 Event lifecycle
 
 ```
 detect ─► OPEN ─┬─► PROPOSED ─► MERGED
@@ -304,7 +335,8 @@ control/
   lineage.py         dbt manifest → what a change breaks
   register.py        publish contracts, append only
   load.py            stage + COPY seed CSVs
-  agent.py           draft, verify, publish, sync
+  agent.py           draft, verify, publish, sync, shield PRs
+  shield.py          deterministic compatibility shields for breaking drift
   cli.py             every command
   ui.py + static/    local console
 dbt/                 13 models, 22 tests
@@ -418,9 +450,9 @@ this and refuses to enable auto merge.
 | `apply <file.sql>` | Run a SQL file. Refuses unqualified table DDL | |
 | `load` | Stage and COPY seed CSVs into RAW | `[TABLE ...]` |
 | `register` | Publish contracts. Append only | |
-| `detect` | Compare, classify, persist | `--dry-run`, `--fail-on-breaking`, `--dataset X` |
+| `detect` | Compare, classify, persist. Warns on stale shields | `--dry-run`, `--fail-on-breaking`, `--dataset X` |
 | `status` | Contracts and open drift with affected marts | |
-| `agent` | Open drift → PRs and issues | `--dry-run`, `--no-merge`, `--dataset X` |
+| `agent` | Open drift → PRs, issues, shields | `--dry-run`, `--no-merge`, `--dataset X` |
 | `sync` | GitHub outcomes → event status | `--dry-run` |
 | `resolve` | Close events by hand | `--all`, `--status`, `--ref` |
 | `dbt <args>` | dbt with the control plane's connection | any dbt args |
@@ -519,10 +551,10 @@ python -m pytest tests -q
 |---|---|
 | Detection | 8 contracts, all 7 scenarios classified correctly |
 | dbt | 13 models, 22 tests, contracts enforced, `PASS=35` |
-| Agent | Drafts, verifies, opens PRs and issues, routes correctly |
+| Agent | Drafts, verifies, opens PRs and issues, routes correctly, shields breaking drift |
 | Full cycle | drift → agent PR → merged → register → dataset clean at v2 → sync marks MERGED |
 | Impact | On every event, in every PR and issue |
-| Console, sync, scheduled cycle, 63 tests | Done |
+| Console, sync, scheduled cycle, 75 tests | Done |
 
 ### Not done
 
@@ -550,7 +582,7 @@ python -m pytest tests -q
 |---|---|---|
 | 1 | Branch protection, watch one gated PR go green | Makes the LOW path autonomous |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
-| 3 | Agent remediates BREAKING | Compatibility view, backfill, staged contract with deprecation window |
+| 3 | Staged contract change after a shield | v+1 marks the column deprecated, v+2 removes it, so a shield is retired on a schedule instead of by hand |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 
 **Replacing Claude.** The agent is the only hosted model call, behind one
