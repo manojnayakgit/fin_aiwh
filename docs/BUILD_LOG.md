@@ -1158,5 +1158,7 @@ only shows when a divergence goes through a second lifecycle, and nothing did
 until the repair scenario closed an issue that a MEDIUM had been riding along
 in.
 
-Also: `NULL_COUNT` refuses unbounded VARCHAR as well as BOOLEAN. The cast is
-to `NUMBER(1,0)` now, which the probe proved.
+Also: `NULL_COUNT` refused `IS_ACTIVE` as BOOLEAN, then cast to VARCHAR, then
+cast to NUMBER. Three guesses at a type it would take was two too many. It is
+a custom DMF with `BOOLEAN` declared now, the same pattern as freshness, and
+attachable for the same reason.

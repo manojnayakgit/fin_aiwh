@@ -729,7 +729,7 @@ contained. Verification does not trust the draft either way.
 | `gh pr create` fails with no visible reason | Older `_run` hid the subprocess output | Fixed. Failures now print what the command said |
 | `git commit failed: nothing to commit` on a shield | The shield was already merged, or the drift is gone | Fixed. The agent skips both cases and says which |
 | `load` says `skipped: table has NOT NULL columns with no default that the seed does not carry` | The table moved past the v1 seed (scenario 02 added `REVENUE_STREAM` NOT NULL) | Nothing was truncated. Either adopt the column so the seed can be regenerated, or leave that table's data as it is |
-| `Invalid argument types for function 'NULL_COUNT'` | A NOT NULL BOOLEAN column | Fixed. Measured through a cast to `NUMBER(1,0)`, not attached |
+| `Invalid argument types for function 'NULL_COUNT'` | A NOT NULL BOOLEAN column; the system DMF refuses it cast or not | Fixed. `FIN_AIWH.META.NULL_COUNT_BOOL`, a custom DMF with the type declared, from `ops/20_quality.sql` |
 | `sync` lists the same event several times | Pre-`04_event_identity` rows sharing an `EVENT_ID` | Run `ops/sql/04_event_identity.sql` once |
 
 

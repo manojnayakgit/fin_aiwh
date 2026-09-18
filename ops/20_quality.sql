@@ -31,9 +31,24 @@ $$;
 
 GRANT USAGE ON FUNCTION FIN_AIWH.META.NEWEST_EPOCH_NTZ(TABLE(TIMESTAMP_NTZ)) TO ROLE FIN_AIWH_ENG;
 
+-- 2b. Null count for BOOLEAN columns. SNOWFLAKE.CORE.NULL_COUNT refuses a
+--     BOOLEAN argument, and refuses it cast to text or number as well. A custom
+--     DMF with the type declared is the honest fix and can be attached.
+CREATE OR REPLACE DATA METRIC FUNCTION FIN_AIWH.META.NULL_COUNT_BOOL(
+    arg_t TABLE(arg_c BOOLEAN)
+)
+RETURNS NUMBER
+AS
+$$
+    SELECT COUNT_IF(arg_c IS NULL) FROM arg_t
+$$;
+
+GRANT USAGE ON FUNCTION FIN_AIWH.META.NULL_COUNT_BOOL(TABLE(BOOLEAN)) TO ROLE FIN_AIWH_ENG;
+
 -- 3. Prove it, as ACCOUNTADMIN, before handing to the CLI.
 SELECT SNOWFLAKE.CORE.DUPLICATE_COUNT(SELECT INVOICE_ID FROM FIN_AIWH.RAW.AP_INVOICE)  AS dup_invoice_ids,
        SNOWFLAKE.CORE.NULL_COUNT(SELECT GROSS_AMOUNT FROM FIN_AIWH.RAW.AP_INVOICE)      AS null_amounts,
+       FIN_AIWH.META.NULL_COUNT_BOOL(SELECT IS_ACTIVE FROM FIN_AIWH.RAW.AP_VENDOR)          AS null_flags,
        (DATE_PART(EPOCH_SECOND, SYSDATE())
           - FIN_AIWH.META.NEWEST_EPOCH_NTZ(SELECT LOADED_AT FROM FIN_AIWH.RAW.AP_INVOICE)) / 3600
                                                                                            AS hours_behind;

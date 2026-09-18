@@ -156,11 +156,12 @@ def test_scenario_scripts_and_load_use_one_clock():
             assert "SYSDATE()" in s or "CURRENT_TIMESTAMP()" in s, f.name
 
 
-def test_boolean_not_null_is_measured_through_a_cast_and_not_attached():
+def test_boolean_not_null_uses_the_custom_dmf():
+    """SNOWFLAKE.CORE.NULL_COUNT refuses BOOLEAN, cast or not."""
     c = contract(columns=[ContractColumn("VENDOR_ID", "TEXT", False),
                           ContractColumn("IS_ACTIVE", "BOOLEAN", False)],
                  primary_key=["VENDOR_ID"], freshness={})
     nulls = {x.columns[0]: x for x in desired(c) if x.change_type == "NULL_IN_REQUIRED"}
-    assert "CAST(IS_ACTIVE AS NUMBER(1,0))" in nulls["IS_ACTIVE"].sql()
-    assert not nulls["IS_ACTIVE"].attachable
-    assert "CAST" not in nulls["VENDOR_ID"].sql() and nulls["VENDOR_ID"].attachable
+    assert nulls["IS_ACTIVE"].dmf == "FIN_AIWH.META.NULL_COUNT_BOOL"
+    assert nulls["VENDOR_ID"].dmf == "SNOWFLAKE.CORE.NULL_COUNT"
+    assert "CAST" not in nulls["IS_ACTIVE"].sql()
