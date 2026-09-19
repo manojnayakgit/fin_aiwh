@@ -1230,3 +1230,17 @@ is dirty and `publish()` refuses. It is a system temp file now.
 
 Neither store has run live yet. Neo4j and Ollama are a compose file and a
 pull away; RAGFlow needs documents to index and 16 GB of RAM.
+
+**Live on Neo4j.** Every event in META ingested, and asking for a column
+returned its full life with dates. Three things the first real query exposed:
+graphiti wants `httpx` by its old name while the current `openai` pulls
+`httpx2`; its cross-encoder is a third client that defaults to OpenAI, so it
+gets a keep-order no-op and no OpenAI key is needed anywhere; and it reports to
+PostHog unless told not to, which a governance layer built to avoid vendor
+control should not do.
+
+The fourth was the interesting one. Asking for `BANK_REF` returned a fact about
+`CURRENCY_CODE`. Semantic search returns neighbours, and neighbours are not the
+subject. History is now over-fetched and filtered to facts whose subject line
+names what was asked for. An agent shown the wrong column's history does not
+fail loudly; it argues confidently from the wrong case.

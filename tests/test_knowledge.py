@@ -117,3 +117,18 @@ def test_prompt_is_unchanged_when_nothing_is_configured(monkeypatch):
     for k in ("GRAPHITI_URI", "RAGFLOW_URL", "RAGFLOW_API_KEY", "RAGFLOW_DATASET_IDS"):
         monkeypatch.delenv(k, raising=False)
     assert agent.context_sections("RAW.AP_PAYMENT", "AP_PAYMENT", ["BANK_REF"], ["BANK_REF"]) == ([], [])
+
+
+# ------------------------------------------------- history is about the subject
+
+@pytest.mark.parametrize("fact,subject,keep", [
+    ("RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED (BREAKING) detected 2026-09-17", "RAW.AP_PAYMENT.BANK_REF", True),
+    ("RAW.AP_INVOICE.CURRENCY_CODE: NULLABILITY_RELAXED detected 2026-09-17", "RAW.AP_PAYMENT.BANK_REF", False),
+    ("RAW.AP_PAYMENT: DATASET_UNGOVERNED detected 2026-09-17", "RAW.AP_PAYMENT", True),
+    ("RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED detected 2026-09-17", "RAW.AP_PAYMENT", True),
+    ("RAW.AR_RECEIPT.LOADED_AT: STALE detected 2026-09-18", "RAW.AP_PAYMENT", False),
+])
+def test_only_facts_about_the_subject_reach_the_agent(fact, subject, keep):
+    """Semantic search returns neighbours. An agent shown another column's
+    history argues from the wrong case."""
+    assert memory._about(fact, subject) is keep

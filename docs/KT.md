@@ -399,6 +399,10 @@ drafts without it and the PR body says `Drafted without: ...`.
 | Graphiti on Neo4j | `control/memory.py` | a "History of this dataset" section in the prompt | `META.DRIFT_EVENT`, pushed by `sync` and `memory --ingest` |
 | RAGFlow | `control/knowledge.py` | a "Reference definitions" section, cited in descriptions | documents you upload: ERP data dictionary, chart of accounts, policies |
 
+**Telemetry is off.** Graphiti reports version and provider choices to PostHog by default. `GRAPHITI_TELEMETRY_ENABLED=false` is set before the import.
+
+**History is about the subject.** Search is semantic, so a query for `BANK_REF` will happily return a fact about `CURRENCY_CODE`. Results are over-fetched and filtered to facts whose subject line names what was asked for; an agent shown another column's history argues from the wrong case.
+
 **Memory is deterministic.** Every fact is built by code from an event row:
 `RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED (BREAKING) detected 2026-09-17;
 escalated as issue #3`. Ingest goes through Graphiti's `add_triplet`, so no
@@ -728,7 +732,7 @@ nothing to do and exits clean.
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |
 | Content governance | Proven live. Duplicate key and stale table each raised an issue, no PR; both issues closed by the agent on repair |
-| Knowledge, optional | Graphiti history and RAGFlow definitions feed the draft; fail soft; not yet run live |
+| Knowledge, optional | Graphiti history proven live on Neo4j: every event ingested, history queried. RAGFlow awaits documents |
 | Console, sync, scheduled cycle, 157 tests | Done |
 
 ### Not done

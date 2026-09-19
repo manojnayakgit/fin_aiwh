@@ -113,6 +113,10 @@ def fact_from_event(e: dict) -> Fact:
 # --------------------------------------------------------------------------
 
 def _client():
+    # Graphiti reports version, OS, provider choices to PostHog by default.
+    # Nothing sensitive, by its own documentation, but a governance layer that
+    # exists so control is not held by a vendor does not phone one either.
+    os.environ.setdefault("GRAPHITI_TELEMETRY_ENABLED", "false")
     from graphiti_core import Graphiti
     from graphiti_core.cross_encoder.client import CrossEncoderClient
     from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
@@ -164,16 +168,29 @@ async def _ingest(facts: list[Fact]) -> int:
         await g.close()
 
 
+def _about(fact: str, subject: str) -> bool:
+    """Search is semantic, so a query for BANK_REF happily returns a fact about
+    CURRENCY_CODE. Related is not the same as relevant: history handed to the
+    agent must be about the thing asked for, or it argues from the wrong case."""
+    return fact.split(":", 1)[0].strip().upper().startswith(subject.upper())
+
+
 async def _history(subject: str, limit: int) -> list[str]:
     g = _client()
     try:
-        edges = await g.search(f"history of {subject}", group_ids=[GROUP], num_results=limit)
+        # over-fetch, then keep only what the subject line actually names
+        edges = await g.search(f"history of {subject}", group_ids=[GROUP],
+                               num_results=max(limit * 5, 25))
         out = []
         for e in edges:
+            if not _about(e.fact, subject):
+                continue
             span = f"{e.valid_at:%Y-%m-%d}" if e.valid_at else "?"
             if e.invalid_at:
                 span += f" to {e.invalid_at:%Y-%m-%d}"
             out.append(f"[{span}] {e.fact}")
+            if len(out) >= limit:
+                break
         return out
     finally:
         await g.close()
