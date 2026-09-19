@@ -183,6 +183,42 @@ LIMIT $limit
 """
 
 
+# What the graph actually holds, unfiltered. For the day the lookup returns
+# nothing and the question is whether the names written are the names stored.
+DUMP_CYPHER = """
+MATCH (s)-[e]->(t)
+RETURN labels(s) AS s_labels, s.name AS s_name, type(e) AS rel, e.name AS e_name,
+       e.group_id AS group_id, e.fact AS fact, t.name AS t_name
+ORDER BY s_name, fact
+LIMIT $limit
+"""
+
+
+async def _dump(limit: int) -> list[str]:
+    from neo4j import AsyncGraphDatabase
+
+    driver = AsyncGraphDatabase.driver(
+        os.environ["GRAPHITI_URI"],
+        auth=(os.getenv("GRAPHITI_USER", "neo4j"), os.environ["GRAPHITI_PASSWORD"]))
+    try:
+        async with driver.session() as s:
+            res = await s.run(DUMP_CYPHER, limit=limit)
+            return [f"{r['s_labels']} {r['s_name']!r} -[{r['rel']}/{r['e_name']} "
+                    f"group={r['group_id']!r}]-> {r['t_name']!r}: {r['fact']}"
+                    async for r in res]
+    finally:
+        await driver.close()
+
+
+def dump(limit: int = 40) -> tuple[list[str], str | None]:
+    if not enabled():
+        return [], None
+    try:
+        return asyncio.run(_dump(limit)), None
+    except Exception as e:  # noqa: BLE001
+        return [], f"{type(e).__name__}: {str(e).splitlines()[0]}"
+
+
 def _line(fact: str, valid_at, invalid_at) -> str:
     def d(x):
         return x.to_native().strftime("%Y-%m-%d") if hasattr(x, "to_native") else (

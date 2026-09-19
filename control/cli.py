@@ -603,8 +603,16 @@ def cmd_memory(args):
         with connect() as conn:
             _remember(conn)
         return 0
+    if args.dump:
+        lines, err = memory_mod.dump()
+        if err:
+            console.print(f"[red]{err}[/red]")
+            return 1
+        for l in lines or ["[dim]graph is empty[/dim]"]:
+            console.print(l, markup=False)
+        return 0
     if not args.dataset:
-        console.print("give a dataset to ask about, or --ingest")
+        console.print("give a dataset to ask about, --ingest, or --dump")
         return 1
     lines, err = memory_mod.history(args.dataset.upper(), args.column.upper() if args.column else None)
     if err:
@@ -726,6 +734,7 @@ def main(argv=None):
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)
 
     mm = sub.add_parser("memory", help="knowledge graph of drift history (Graphiti, optional)")
+    mm.add_argument("--dump", action="store_true", help="print what the graph holds, unfiltered")
     mm.add_argument("--ingest", action="store_true", help="push every META event into the graph")
     mm.add_argument("dataset", nargs="?", help="ask: RAW.AP_PAYMENT")
     mm.add_argument("column", nargs="?", help="ask: BANK_REF")

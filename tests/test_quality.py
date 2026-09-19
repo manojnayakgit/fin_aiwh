@@ -184,5 +184,9 @@ def test_every_contract_gets_a_row_count_floor():
     c = next(x for x in desired(contract()) if x.change_type == "EMPTY_DATASET")
     assert c.dmf == "SNOWFLAKE.CORE.ROW_COUNT" and c.columns == ()
     assert c.min == 1 and c.max is None and c.severity == MEDIUM
-    assert c.sql() == "SNOWFLAKE.CORE.ROW_COUNT(SELECT * FROM FIN_AIWH.RAW.AP_INVOICE)"
+    # ROW_COUNT attaches but cannot be called directly (Snowflake: "You can't
+    # call this function directly"). Live it answered "expected 0 arguments,
+    # got 1". The attachment keeps the DMF; the measurement is plain SQL.
+    assert c.attachable
+    assert c.sql() == "(SELECT COUNT(*) FROM FIN_AIWH.RAW.AP_INVOICE)"
     assert c.breached(0.0) and not c.breached(8000.0)

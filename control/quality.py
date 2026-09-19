@@ -99,6 +99,12 @@ class Check:
             keys = ", ".join(self.columns)
             return (f"(SELECT COUNT(*) - COUNT(DISTINCT {keys}) "
                     f"FROM FIN_AIWH.{self.dataset_key})")
+        if self.dmf.endswith(".ROW_COUNT"):
+            # ROW_COUNT is the one system DMF Snowflake refuses to call
+            # directly ("You can't call this function directly"). It attaches
+            # fine, so the attachment keeps the DMF and the measurement here
+            # asks the table the same question in plain SQL.
+            return f"(SELECT COUNT(*) FROM FIN_AIWH.{self.dataset_key})"
         cols = ", ".join(self.columns) if self.columns else "*"
         call = f"{self.dmf}(SELECT {cols} FROM FIN_AIWH.{self.dataset_key})"
         if self.change_type == "STALE":

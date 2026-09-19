@@ -361,7 +361,7 @@ invented:
 
 | Contract says | Check | Severity | Why |
 |---|---|---|---|
-| any contract | `ROW_COUNT >= 1` | MEDIUM | an empty table passes every other check vacuously and is still broken |
+| any contract | `ROW_COUNT >= 1` | MEDIUM | an empty table passes every other check vacuously and is still broken. Attached as the system DMF; measured by `COUNT(*)`, because `ROW_COUNT` refuses direct calls |
 | `primary_key: [A]` | `DUPLICATE_COUNT(A) == 0` | BREAKING | every join fans out, every total double counts |
 | `nullable: false` | `NULL_COUNT(col) == 0` | BREAKING | what scenario 06's guard test caught, caught at source |
 | `freshness: max_lag_hours: N` | hours behind on the column `<= N` | MEDIUM | reports are correct but old; a human decides |
@@ -419,6 +419,7 @@ say "inferred" only when none was.
 | Command | What |
 |---|---|
 | `python -m control.cli memory --ingest` | push every META event into the graph |
+| `python -m control.cli memory --dump` | print what the graph holds, unfiltered: node labels, names, edge types, group. Use it when a lookup returns nothing |
 | `python -m control.cli memory RAW.AP_PAYMENT BANK_REF` | ask it |
 | `python -m control.cli knowledge --upload dictionary.pdf coa.xlsx` | upload and parse; prints the dataset id for `.env` |
 | `python -m control.cli knowledge AP_ACCRUAL GL_ACCOUNT PERIOD` | ask it |

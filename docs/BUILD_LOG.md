@@ -1289,3 +1289,18 @@ layer, which governs duplicates, nulls and freshness, is blind to a broken
 reference between two governed datasets. dbt caught this one. That is the two
 layers working as intended, and also a clear statement of where the contract
 stops.
+
+## ROW_COUNT cannot be called, and a graph you cannot see
+
+The row-count floor failed on first contact: `too many arguments for function
+ROW_COUNT$V1 ... expected 0, got 1`. The documentation says it plainly: this
+one system DMF cannot be called directly, only attached. So the attachment
+keeps `SNOWFLAKE.CORE.ROW_COUNT ON ()` and `measure()` asks the same question
+as `(SELECT COUNT(*) FROM t)`. The rule stands: one statement per table, and
+where a DMF will not answer, plain SQL answers in its place.
+
+`memory RAW.AP_PAYMENT BANK_REF` returned "no history" for a column with a
+BREAKING event behind it, while semantic search had returned neighbouring
+facts, so the edges exist. The lookup matches on node name; whether the names
+stored are the names written is the open question. `memory --dump` now prints
+the graph unfiltered so that question gets an answer instead of a guess.
