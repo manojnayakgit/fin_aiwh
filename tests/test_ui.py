@@ -99,3 +99,29 @@ def test_a_job_streams_and_reports_its_exit_code(server):
         assert any("usage: fin-aiwh" in line for line in j["lines"])
     finally:
         ui.ALLOWED.pop("smoke", None)
+
+
+def test_every_cli_command_resolves_its_module_references():
+    """A subcommand that references a module the file never imported is a
+    NameError at runtime and invisible to every other test. Check every name
+    a cmd_* or helper function loads against what the module binds."""
+    import ast, builtins
+    import control.cli as cli
+    tree = ast.parse(open(cli.__file__).read())
+    bound = set(dir(cli)) | set(dir(builtins))
+    for fn in [n for n in tree.body if isinstance(n, ast.FunctionDef)]:
+        local = set()
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                local.add(n.id)
+            elif isinstance(n, ast.arg):
+                local.add(n.arg)
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                local.add(n.name)
+            elif isinstance(n, ast.ExceptHandler) and n.name:
+                local.add(n.name)
+            elif isinstance(n, (ast.Import, ast.ImportFrom)):
+                local |= {(a.asname or a.name).split(".")[0] for a in n.names}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                assert node.id in bound or node.id in local, f"{fn.name} uses undefined name {node.id!r}"

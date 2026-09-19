@@ -23,6 +23,8 @@ from .agent import (BREAKING as _B, breaking_events, bundle_events, close_qualit
 from .lineage import Lineage
 from .load import load_all
 from .register import register
+from . import knowledge as knowledge_mod
+from . import memory as memory_mod
 from . import onboard as onboard_mod
 from . import quality as quality_mod
 from . import shield as shield_mod
