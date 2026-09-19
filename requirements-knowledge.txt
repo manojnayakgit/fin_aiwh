@@ -1,3 +1,6 @@
 # Optional. Only needed when GRAPHITI_URI or RAGFLOW_URL is set.
 graphiti-core>=0.20
 ragflow-sdk>=0.20
+# graphiti still imports httpx by its old name; newer openai pulls httpx2 instead,
+# so the classic package is not guaranteed to be present.
+httpx>=0.27
