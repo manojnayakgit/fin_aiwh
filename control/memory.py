@@ -171,6 +171,15 @@ async def _history(subject: str, limit: int) -> list[str]:
 # what the rest of the system calls
 # --------------------------------------------------------------------------
 
+def _import_problem(e: ImportError) -> str:
+    """Only blame a missing install when graphiti itself is missing. An import
+    failing inside the package (a renamed module, a missing extra) is a
+    different problem and its own message is the useful one."""
+    if getattr(e, "name", "") == "graphiti_core" or "No module named 'graphiti_core'" in str(e):
+        return "graphiti-core is not installed: pip install -r requirements-knowledge.txt"
+    return f"ImportError inside graphiti-core: {e}"
+
+
 def remember(events: list[dict]) -> tuple[int, str | None]:
     """Push every event row into the graph. Idempotent. Returns (count, error)."""
     if not enabled():
@@ -178,8 +187,8 @@ def remember(events: list[dict]) -> tuple[int, str | None]:
     facts = [fact_from_event(e) for e in events]
     try:
         return asyncio.run(_ingest(facts)), None
-    except ImportError:
-        return 0, "graphiti-core is not installed: pip install -r requirements-knowledge.txt"
+    except ImportError as e:
+        return 0, _import_problem(e)
     except Exception as e:  # noqa: BLE001
         return 0, f"{type(e).__name__}: {str(e).splitlines()[0]}"
 
@@ -191,8 +200,8 @@ def history(dataset: str, column: str | None = None, limit: int = 8) -> tuple[li
     subject = f"{dataset}.{column}" if column else dataset
     try:
         return asyncio.run(_history(subject, limit)), None
-    except ImportError:
-        return [], "graphiti-core is not installed: pip install -r requirements-knowledge.txt"
+    except ImportError as e:
+        return [], _import_problem(e)
     except Exception as e:  # noqa: BLE001
         return [], f"{type(e).__name__}: {str(e).splitlines()[0]}"
 
