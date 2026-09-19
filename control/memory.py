@@ -25,8 +25,10 @@ Configuration (.env):
                        http://localhost:11434/v1
   EMBED_MODEL          nomic-embed-text
   EMBED_API_KEY        any non-empty string for Ollama
-Graphiti also needs an LLM client object to construct; Anthropic is used so no
-OpenAI key is required. add_triplet does not call it for extraction.
+Graphiti wants three clients: an LLM (Anthropic here), an embedder (Ollama
+through the OpenAI-compatible endpoint) and a cross-encoder reranker (a no-op
+that keeps search order). None of them is OpenAI, so no OpenAI key.
+add_triplet does not call the LLM for extraction.
 """
 from __future__ import annotations
 
@@ -112,9 +114,18 @@ def fact_from_event(e: dict) -> Fact:
 
 def _client():
     from graphiti_core import Graphiti
+    from graphiti_core.cross_encoder.client import CrossEncoderClient
     from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
     from graphiti_core.llm_client.anthropic_client import AnthropicClient
     from graphiti_core.llm_client.config import LLMConfig
+
+    class KeepOrder(CrossEncoderClient):
+        """Graphiti's default reranker is an OpenAI client, the third place it
+        wants an OpenAI key. For a graph of a few hundred facts, hybrid search
+        order is good enough; this keeps it and needs no key."""
+        async def rank(self, query: str, passages: list[str]) -> list[tuple[str, float]]:
+            n = max(len(passages), 1)
+            return [(p, 1.0 - i / n) for i, p in enumerate(passages)]
 
     llm = AnthropicClient(config=LLMConfig(
         api_key=os.environ["ANTHROPIC_API_KEY"],
@@ -124,7 +135,8 @@ def _client():
         base_url=os.getenv("EMBED_BASE_URL", "http://localhost:11434/v1"),
         embedding_model=os.getenv("EMBED_MODEL", "nomic-embed-text")))
     return Graphiti(os.environ["GRAPHITI_URI"], os.getenv("GRAPHITI_USER", "neo4j"),
-                    os.environ["GRAPHITI_PASSWORD"], llm_client=llm, embedder=embedder)
+                    os.environ["GRAPHITI_PASSWORD"], llm_client=llm, embedder=embedder,
+                    cross_encoder=KeepOrder())
 
 
 async def _ingest(facts: list[Fact]) -> int:
