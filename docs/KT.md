@@ -401,7 +401,7 @@ drafts without it and the PR body says `Drafted without: ...`.
 
 **Telemetry is off.** Graphiti reports version and provider choices to PostHog by default. `GRAPHITI_TELEMETRY_ENABLED=false` is set before the import.
 
-**History is about the subject.** Search is semantic, so a query for `BANK_REF` will happily return a fact about `CURRENCY_CODE`. Results are over-fetched and filtered to facts whose subject line names what was asked for; an agent shown another column's history argues from the wrong case.
+**History is read by lookup, not by similarity.** Semantic search was tried first and returned a neighbouring column's history while missing the one asked for, which is the worst outcome available: an agent arguing confidently from the wrong case. Ingest writes deterministic node names, so retrieval is one Cypher match on them, newest first. Asking for a dataset includes its columns; asking for a column returns only it. Embeddings still run at ingest because Graphiti's model wants them, but they are not how this is read.
 
 **Memory is deterministic.** Every fact is built by code from an event row:
 `RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED (BREAKING) detected 2026-09-17;

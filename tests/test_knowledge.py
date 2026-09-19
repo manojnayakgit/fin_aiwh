@@ -121,14 +121,28 @@ def test_prompt_is_unchanged_when_nothing_is_configured(monkeypatch):
 
 # ------------------------------------------------- history is about the subject
 
-@pytest.mark.parametrize("fact,subject,keep", [
-    ("RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED (BREAKING) detected 2026-09-17", "RAW.AP_PAYMENT.BANK_REF", True),
-    ("RAW.AP_INVOICE.CURRENCY_CODE: NULLABILITY_RELAXED detected 2026-09-17", "RAW.AP_PAYMENT.BANK_REF", False),
-    ("RAW.AP_PAYMENT: DATASET_UNGOVERNED detected 2026-09-17", "RAW.AP_PAYMENT", True),
-    ("RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED detected 2026-09-17", "RAW.AP_PAYMENT", True),
-    ("RAW.AR_RECEIPT.LOADED_AT: STALE detected 2026-09-18", "RAW.AP_PAYMENT", False),
+def test_history_is_read_by_lookup_not_similarity():
+    """Semantic search returned a neighbouring column and missed the one asked
+    for. Ingest writes deterministic names, so retrieval matches on them."""
+    q = memory.HISTORY_CYPHER
+    assert "s.name = $subject OR s.name STARTS WITH $prefix" in q
+    assert "ORDER BY e.valid_at DESC" in q
+
+
+@pytest.mark.parametrize("name,subject,keep", [
+    ("RAW.AP_PAYMENT.BANK_REF", "RAW.AP_PAYMENT.BANK_REF", True),
+    ("RAW.AP_INVOICE.CURRENCY_CODE", "RAW.AP_PAYMENT.BANK_REF", False),
+    ("RAW.AP_PAYMENT", "RAW.AP_PAYMENT", True),
+    ("RAW.AP_PAYMENT.BANK_REF", "RAW.AP_PAYMENT", True),
+    ("RAW.AR_RECEIPT.LOADED_AT", "RAW.AP_PAYMENT", False),
 ])
-def test_only_facts_about_the_subject_reach_the_agent(fact, subject, keep):
-    """Semantic search returns neighbours. An agent shown another column's
-    history argues from the wrong case."""
-    assert memory._about(fact, subject) is keep
+def test_the_match_clause_selects_the_subject_and_its_columns(name, subject, keep):
+    """What the Cypher WHERE evaluates to, in Python, for each case that matters."""
+    assert (name == subject or name.startswith(f"{subject}.")) is keep
+
+
+def test_a_line_carries_the_span_and_the_fact():
+    from datetime import datetime
+    assert memory._line("X: dropped", datetime(2026, 9, 17), None) == "[2026-09-17] X: dropped"
+    assert memory._line("X: dropped", datetime(2026, 9, 17), datetime(2026, 9, 18)) == \
+        "[2026-09-17 to 2026-09-18] X: dropped"

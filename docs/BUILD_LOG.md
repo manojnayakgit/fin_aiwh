@@ -1239,8 +1239,17 @@ gets a keep-order no-op and no OpenAI key is needed anywhere; and it reports to
 PostHog unless told not to, which a governance layer built to avoid vendor
 control should not do.
 
-The fourth was the interesting one. Asking for `BANK_REF` returned a fact about
-`CURRENCY_CODE`. Semantic search returns neighbours, and neighbours are not the
-subject. History is now over-fetched and filtered to facts whose subject line
-names what was asked for. An agent shown the wrong column's history does not
-fail loudly; it argues confidently from the wrong case.
+The fourth was the interesting one, and took two attempts. Asking for
+`BANK_REF` returned a fact about `CURRENCY_CODE`. Filtering the results to the
+subject fixed the wrong answer and produced no answer: the search had never
+retrieved `BANK_REF` at all.
+
+Semantic search was the wrong instrument. "What happened to this column" is a
+lookup with an exact answer, and ingest already writes deterministic node
+names. Retrieval is now one Cypher match on the name, newest first, with a
+dataset query including its columns. Embeddings still run at ingest because
+Graphiti's model wants them; they are not how this is read.
+
+The general shape, again: deterministic ingest deserves deterministic
+retrieval. Reaching for similarity because the store offers it put a
+neighbouring column's history in front of an agent and called it context.

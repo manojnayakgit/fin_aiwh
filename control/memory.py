@@ -168,32 +168,47 @@ async def _ingest(facts: list[Fact]) -> int:
         await g.close()
 
 
-def _about(fact: str, subject: str) -> bool:
-    """Search is semantic, so a query for BANK_REF happily returns a fact about
-    CURRENCY_CODE. Related is not the same as relevant: history handed to the
-    agent must be about the thing asked for, or it argues from the wrong case."""
-    return fact.split(":", 1)[0].strip().upper().startswith(subject.upper())
+# Retrieval is a lookup, not a similarity contest. Ingest writes deterministic
+# node names, so "what happened to this column" has an exact answer. Semantic
+# search was tried first and returned a neighbouring column's history while
+# missing the one asked for, which is the worst possible outcome: an agent
+# arguing confidently from the wrong case. Embeddings still run at ingest,
+# because Graphiti's model wants them; they are simply not how this is read.
+HISTORY_CYPHER = """
+MATCH (s:Entity)-[e:RELATES_TO]->(:Entity)
+WHERE e.group_id = $group AND (s.name = $subject OR s.name STARTS WITH $prefix)
+RETURN e.fact AS fact, e.valid_at AS valid_at, e.invalid_at AS invalid_at
+ORDER BY e.valid_at DESC, e.fact
+LIMIT $limit
+"""
+
+
+def _line(fact: str, valid_at, invalid_at) -> str:
+    def d(x):
+        return x.to_native().strftime("%Y-%m-%d") if hasattr(x, "to_native") else (
+            x.strftime("%Y-%m-%d") if x else "?")
+    span = d(valid_at) + (f" to {d(invalid_at)}" if invalid_at else "")
+    return f"[{span}] {fact}"
 
 
 async def _history(subject: str, limit: int) -> list[str]:
-    g = _client()
+    """Every fact about this dataset or column, newest first.
+
+    Asking for a dataset includes its columns: RAW.AP_PAYMENT returns the
+    dataset's own events and BANK_REF's. Asking for a column returns only it.
+    """
+    from neo4j import AsyncGraphDatabase
+
+    driver = AsyncGraphDatabase.driver(
+        os.environ["GRAPHITI_URI"],
+        auth=(os.getenv("GRAPHITI_USER", "neo4j"), os.environ["GRAPHITI_PASSWORD"]))
     try:
-        # over-fetch, then keep only what the subject line actually names
-        edges = await g.search(f"history of {subject}", group_ids=[GROUP],
-                               num_results=max(limit * 5, 25))
-        out = []
-        for e in edges:
-            if not _about(e.fact, subject):
-                continue
-            span = f"{e.valid_at:%Y-%m-%d}" if e.valid_at else "?"
-            if e.invalid_at:
-                span += f" to {e.invalid_at:%Y-%m-%d}"
-            out.append(f"[{span}] {e.fact}")
-            if len(out) >= limit:
-                break
-        return out
+        async with driver.session() as s:
+            res = await s.run(HISTORY_CYPHER, group=GROUP, subject=subject,
+                              prefix=f"{subject}.", limit=limit)
+            return [_line(r["fact"], r["valid_at"], r["invalid_at"]) async for r in res]
     finally:
-        await g.close()
+        await driver.close()
 
 
 # --------------------------------------------------------------------------
