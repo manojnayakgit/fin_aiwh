@@ -1,0 +1,20 @@
+# Optional knowledge services for the control plane.
+#
+#   docker compose -f ops/docker-compose.knowledge.yml up -d
+#
+# Neo4j backs Graphiti (drift history). Embeddings come from Ollama on the
+# host, which on a Mac is the Ollama app, not a container:
+#   ollama pull nomic-embed-text
+# RAGFlow is not started here. It ships its own compose file and needs 16 GB
+# of RAM by its own documentation; see docs/KT.md 4.12.
+services:
+  neo4j:
+    image: neo4j:5.26
+    ports: ["7474:7474", "7687:7687"]
+    environment:
+      NEO4J_AUTH: neo4j/fin_aiwh_dev
+      NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j_data:/data
+volumes:
+  neo4j_data:

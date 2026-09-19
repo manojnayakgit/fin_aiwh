@@ -387,7 +387,49 @@ never run the CLI.
 
 Prerequisite, once, as ACCOUNTADMIN: `ops/20_quality.sql`. Enterprise Edition.
 
-### 4.11 Event lifecycle
+### 4.11 Knowledge: history and definitions
+
+Optional, additive, and the agent runs byte for byte as before when neither
+is configured. Both feed the **draft**. Neither touches `verify()`, the gate
+or the severity rules. When a store is configured and unreachable, the agent
+drafts without it and the PR body says `Drafted without: ...`.
+
+| Store | Module | Feeds | Source of truth |
+|---|---|---|---|
+| Graphiti on Neo4j | `control/memory.py` | a "History of this dataset" section in the prompt | `META.DRIFT_EVENT`, pushed by `sync` and `memory --ingest` |
+| RAGFlow | `control/knowledge.py` | a "Reference definitions" section, cited in descriptions | documents you upload: ERP data dictionary, chart of accounts, policies |
+
+**Memory is deterministic.** Every fact is built by code from an event row:
+`RAW.AP_PAYMENT.BANK_REF: COLUMN_REMOVED (BREAKING) detected 2026-09-17;
+escalated as issue #3`. Ingest goes through Graphiti's `add_triplet`, so no
+model extracts anything; the graph holds what META holds, in a form that can
+be asked "what happened to BANK_REF before". Keys are deterministic, so
+re-running `sync` does not multiply facts. Bi-temporal: `valid_at` is
+`DETECTED_AT`, `invalid_at` is `RESOLVED_AT`.
+
+**Knowledge cites, never infers.** The system prompt now says: with a
+reference definition supplied, name the source document in the description;
+say "inferred" only when none was.
+
+| Command | What |
+|---|---|
+| `python -m control.cli memory --ingest` | push every META event into the graph |
+| `python -m control.cli memory RAW.AP_PAYMENT BANK_REF` | ask it |
+| `python -m control.cli knowledge --upload dictionary.pdf coa.xlsx` | upload and parse; prints the dataset id for `.env` |
+| `python -m control.cli knowledge AP_ACCRUAL GL_ACCOUNT PERIOD` | ask it |
+
+**Setup.** `pip install -r requirements-knowledge.txt`. Neo4j:
+`docker compose -f ops/docker-compose.knowledge.yml up -d`. Embeddings from
+Ollama on the host: `ollama pull nomic-embed-text`. Graphiti needs an LLM
+client to construct; Anthropic is used, so no OpenAI key. RAGFlow runs from
+its own compose file and asks for 16 GB of RAM. Keys in `.env.example`.
+
+**Where this sits in the reference architecture.** Graphiti is the history
+half of the evidence pack and the raw material for trust scores; RAGFlow is
+the policies, SAP specs and runbooks the Propose step reads. Trust scoring and
+the policy engine are not built.
+
+### 4.12 Event lifecycle
 
 ```
 detect ─► OPEN ─┬─► PROPOSED ─► MERGED
@@ -686,7 +728,8 @@ nothing to do and exits clean.
 | Onboarding | Proven live. `RAW.AP_ACCRUAL` went from ungoverned to contract, source entry, staging model and 7 tested columns in one gated PR, merged as `99760b0` |
 | Shield retirement | Proven live. Both shields detected stale, retired via PR #8 and #9, issues closed on merge. BREAKING path proven in both directions |
 | Content governance | Proven live. Duplicate key and stale table each raised an issue, no PR; both issues closed by the agent on repair |
-| Console, sync, scheduled cycle, 145 tests | Done |
+| Knowledge, optional | Graphiti history and RAGFlow definitions feed the draft; fail soft; not yet run live |
+| Console, sync, scheduled cycle, 157 tests | Done |
 
 ### Not done
 
@@ -715,6 +758,7 @@ nothing to do and exits clean.
 | 2 | One shield PR for all breaking datasets | Two shields opened separately both fail the gate until the first merges, because the build is project wide. A single PR covering every unbuildable dataset avoids the stale branch dance |
 | later | Jira handoff for MEDIUM | Out of scope for the PoC, kept open |
 | 3 | Staged contract change after a shield | For a column that is never coming back. Retirement covers the case where upstream repairs it |
+| 3 | Knowledge, live | Run Neo4j and Ollama, `memory --ingest`, upload a data dictionary, watch one PR cite it |
 | 3 | Reset generated from contracts | `99_reset` hard-codes the v1 shape and is now wrong. `ddl_type()` already turns a contract column into DDL; a `reset` command should build every table from its contract |
 | 4 | Extend the shape | Same propose → verify → gate pattern for new source onboarding, test generation, backfill planning |
 

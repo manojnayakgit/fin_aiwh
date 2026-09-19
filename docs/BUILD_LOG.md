@@ -1192,3 +1192,41 @@ contract, closed both issues with a comment and dismissed both events.
 Eleven scenarios. Shape and content. Every one fired against Snowflake and
 every one resolved by the system, with no human step other than clicking Merge
 on a pull request the system wrote.
+
+
+---
+
+## Knowledge: history the agent never had, definitions it always guessed
+
+The reference architecture puts two stores behind the harness: Graphiti on
+Neo4j for bi-temporal facts and outcomes, RAGFlow for policies, SAP specs and
+runbooks. Both feed the Propose step and nothing else. That maps onto what
+exists without changing it: history is the missing half of the evidence pack
+the PR body already is, and definitions are what every "inferred from column
+name" description has been apologising for.
+
+Additive, optional, honest. With no `GRAPHITI_URI` and no `RAGFLOW_URL` the
+agent is unchanged. Configured and unreachable, it drafts without them and the
+PR body says so. `verify()` never sees either.
+
+Two decisions.
+
+Memory ingest is deterministic. Every fact is a sentence built by code from a
+`DRIFT_EVENT` row and pushed through `add_triplet`, so no model extracts
+anything and the graph holds exactly what META holds. Keys are stable, so
+`sync` can push every run without multiplying facts. Graphiti's default
+requires an OpenAI key; it is constructed with the Anthropic client and an
+OpenAI-compatible embedder pointed at Ollama, which keeps the Claude-only
+stance.
+
+Knowledge cites. The system prompt now tells the model to name the source
+document when a definition was supplied and to say "inferred" only when none
+was. The retrieval is one RAGFlow call per column name, best chunk above a
+threshold, document name attached.
+
+One latent bug fixed on the way: `verify()` wrote its scratch YAML into the
+repo root. On a machine where that file cannot be deleted, the working tree
+is dirty and `publish()` refuses. It is a system temp file now.
+
+Neither store has run live yet. Neo4j and Ollama are a compose file and a
+pull away; RAGFlow needs documents to index and 16 GB of RAM.

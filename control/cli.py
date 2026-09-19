@@ -574,7 +574,68 @@ def cmd_sync(args):
             set_status(conn, ids, status)
     total = sum(len(v) for v in moves.values())
     console.print(f"\n[green]{total} event(s) updated[/green]")
+    with connect() as conn:
+        _remember(conn)
     console.print("[dim]a MERGED contract is not in force until you run: register[/dim]")
+    return 0
+
+
+def _remember(conn):
+    """Push every event into the knowledge graph. No-op unless configured."""
+    if not memory_mod.enabled():
+        return
+    rows = query(conn, memory_mod.all_events_sql())
+    n, err = memory_mod.remember(rows)
+    if err:
+        console.print(f"[yellow]memory not updated:[/yellow] {err}")
+    else:
+        console.print(f"[dim]memory: {n} fact(s) in the knowledge graph[/dim]")
+
+
+def cmd_memory(args):
+    """Rebuild the knowledge graph from META, or ask it about a dataset."""
+    if not memory_mod.enabled():
+        console.print("[yellow]GRAPHITI_URI is not set; memory is off[/yellow]")
+        return 1
+    if args.ingest:
+        with connect() as conn:
+            _remember(conn)
+        return 0
+    if not args.dataset:
+        console.print("give a dataset to ask about, or --ingest")
+        return 1
+    lines, err = memory_mod.history(args.dataset.upper(), args.column.upper() if args.column else None)
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return 1
+    if not lines:
+        console.print("[dim]no history[/dim]")
+    for l in lines:
+        console.print(l)
+    return 0
+
+
+def cmd_knowledge(args):
+    """Upload reference documents to RAGFlow, or query definitions."""
+    if args.upload:
+        ds_id, n = knowledge_mod.upload(args.upload)
+        console.print(f"uploaded {n} document(s) to dataset {ds_id}; parsing started")
+        console.print("[dim]put that id in RAGFLOW_DATASET_IDS[/dim]")
+        return 0
+    if not knowledge_mod.enabled():
+        console.print("[yellow]RAGFLOW_URL, RAGFLOW_API_KEY or RAGFLOW_DATASET_IDS is not set[/yellow]")
+        return 1
+    if not args.table:
+        console.print("give a table and columns to ask about, or --upload FILE ...")
+        return 1
+    defs, err = knowledge_mod.definitions(args.table.upper(), [c.upper() for c in args.columns])
+    if err:
+        console.print(f"[red]{err}[/red]")
+        return 1
+    for d in defs or []:
+        console.print(d.line())
+    if not defs:
+        console.print("[dim]nothing above the threshold[/dim]")
     return 0
 
 
@@ -661,6 +722,18 @@ def main(argv=None):
     d.set_defaults(fn=cmd_detect)
 
     sub.add_parser("status", help="contracts and open drift").set_defaults(fn=cmd_status)
+
+    mm = sub.add_parser("memory", help="knowledge graph of drift history (Graphiti, optional)")
+    mm.add_argument("--ingest", action="store_true", help="push every META event into the graph")
+    mm.add_argument("dataset", nargs="?", help="ask: RAW.AP_PAYMENT")
+    mm.add_argument("column", nargs="?", help="ask: BANK_REF")
+    mm.set_defaults(fn=cmd_memory)
+
+    kn = sub.add_parser("knowledge", help="reference definitions (RAGFlow, optional)")
+    kn.add_argument("--upload", nargs="+", metavar="FILE", help="upload documents and start parsing")
+    kn.add_argument("table", nargs="?", help="ask: AP_ACCRUAL")
+    kn.add_argument("columns", nargs="*", help="ask: GL_ACCOUNT PERIOD")
+    kn.set_defaults(fn=cmd_knowledge)
 
     g = sub.add_parser("agent", help="turn open drift into PRs or escalations")
     g.add_argument("--dry-run", action="store_true", help="draft and verify, touch nothing")

@@ -22,6 +22,7 @@ from .config import ROOT
 from .contracts import CONTRACT_DIR, Contract, load_contracts, parse_contract
 from .detect import BREAKING, LOW, MEDIUM, ObservedColumn, diff_dataset
 from .lineage import Lineage
+from . import knowledge, memory
 from .snow import execute, query
 
 SEV_ORDER = {LOW: 0, MEDIUM: 1, BREAKING: 2}
@@ -40,6 +41,7 @@ class Bundle:
     contract: Contract | None
     observed: dict[str, ObservedColumn]
     lineage: Lineage | None = None
+    context_notes: list[str] = field(default_factory=list)
 
     def impact_for(self, event: dict):
         """What this one event breaks downstream."""
@@ -186,6 +188,10 @@ Rules you must follow exactly:
   model's existing structure and add the column in the same style.
 - Do not invent business rules. If you are unsure, adopt the column plainly and say
   so in pr_body so a reviewer can decide.
+- If reference definitions are supplied, use them for descriptions and name the
+  source document in the description. Only say "inferred" when none was supplied.
+- If history is supplied, take it into account and mention it in pr_body when it
+  changes what you propose.
 """
 
 
@@ -204,6 +210,34 @@ def _observed_json(observed: dict[str, ObservedColumn]) -> str:
 def _events_json(events: list[dict]) -> str:
     keep = ("CHANGE_TYPE", "SEVERITY", "OBJECT_NAME", "BEFORE_STATE", "AFTER_STATE", "RATIONALE")
     return json.dumps([{k: e.get(k) for k in keep} for e in events], indent=2, default=str)
+
+
+def context_sections(dataset_key: str, table: str, columns: list[str],
+                     objects: list[str | None]) -> tuple[list[str], list[str]]:
+    """Optional prompt material from the knowledge graph and the document store.
+
+    Returns (lines, notes). Lines go into the prompt; notes say what was
+    unavailable, so the PR body can be honest about what the draft did not have.
+    Both stores are optional and both fail soft.
+    """
+    lines: list[str] = []
+    notes: list[str] = []
+    hist: list[str] = []
+    for obj in {o for o in objects if o} or {None}:
+        h, err = memory.history(dataset_key, obj)
+        if err:
+            notes.append(f"history unavailable: {err}")
+            break
+        hist += h
+    if hist:
+        lines += ["History of this dataset, from the knowledge graph:", *hist, ""]
+    defs, err = knowledge.definitions(table, columns)
+    if err:
+        notes.append(f"reference definitions unavailable: {err}")
+    if defs:
+        lines += ["Reference definitions, cite the source instead of inferring:",
+                  *[d.line() for d in defs], ""]
+    return lines, notes
 
 
 def build_prompt(bundle: Bundle, example_contract: str) -> str:
@@ -226,6 +260,13 @@ def build_prompt(bundle: Bundle, example_contract: str) -> str:
     if lines:
         parts += ["Downstream impact of these changes, from dbt lineage:", *lines, ""]
     parts += ["Live schema from INFORMATION_SCHEMA:", _observed_json(bundle.observed), ""]
+    ctx, notes = context_sections(
+        bundle.dataset_key, bundle.table,
+        [e["OBJECT_NAME"] for e in bundle.events if e.get("OBJECT_NAME")]
+        or list(bundle.observed.keys()),
+        [e.get("OBJECT_NAME") for e in bundle.events])
+    bundle.context_notes = notes
+    parts += ctx
     if current:
         parts += ["Current contract:", "```yaml", current, "```", ""]
     else:
@@ -282,16 +323,17 @@ def verify(proposal: Proposal) -> Proposal:
     """Reject anything the model got wrong. Populates proposal.errors."""
     b = proposal.bundle
     errs: list[str] = []
-    tmp = ROOT / ".agent_tmp.yml"
-    try:
-        tmp.write_text(proposal.contract_yaml)
-        new = parse_contract(tmp)
-    except Exception as e:  # noqa: BLE001
-        proposal.errors = [f"contract does not parse: {e}"]
-        return proposal
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    # Parsed through a temp file outside the repo: a scratch file in ROOT
+    # would dirty the working tree that publish() then refuses.
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d) / "proposal.yml"
+        try:
+            tmp.write_text(proposal.contract_yaml)
+            new = parse_contract(tmp)
+        except Exception as e:  # noqa: BLE001
+            proposal.errors = [f"contract does not parse: {e}"]
+            return proposal
 
     if new.dataset != b.dataset_key:
         errs.append(f"dataset is {new.dataset}, expected {b.dataset_key}")
@@ -454,8 +496,10 @@ def publish(proposal: Proposal, auto_merge: bool) -> str:
             f"\n## Downstream impact\n\n{impact.markdown()}\n"
             if impact and not impact.empty else ""
         )
+        gaps = proposal.bundle.context_notes
+        gap_block = ("\n_Drafted without: " + "; ".join(gaps) + "_\n") if gaps else ""
         body = (
-            f"{proposal.pr_body}\n{impact_block}\n---\n"
+            f"{proposal.pr_body}\n{impact_block}{gap_block}\n---\n"
             f"Agent reasoning: {proposal.reasoning}\n\n"
             f"Drift events: {', '.join(proposal.bundle.event_ids)}\n"
         )
@@ -712,7 +756,8 @@ The staging layer normalises, it does not interpret. Rules you must follow exact
 
 def build_onboard_prompt(contract_yaml: str, observed: dict[str, ObservedColumn],
                          table: str, example_model: str) -> str:
-    return "\n".join([
+    ctx, _ = context_sections(f"RAW.{table}", table, list(observed.keys()), [None])
+    return "\n".join([*ctx,
         f"Raw table: RAW.{table}", "",
         "Its contract, merged in this same pull request:", "```yaml", contract_yaml, "```", "",
         "Live schema from INFORMATION_SCHEMA:", _observed_json(observed), "",

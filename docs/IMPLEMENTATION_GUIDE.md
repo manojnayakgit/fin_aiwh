@@ -6072,7 +6072,7 @@ CREATE OR REPLACE TABLE FIN_AIWH.RAW.FX_RATE (
 
 # Appendix B. Complete source of the control plane
 
-Final form at `ec2a538`. Every module, in dependency order.
+Final form at `e1ea77b`. Every module, in dependency order.
 
 **`control/config.py`**
 

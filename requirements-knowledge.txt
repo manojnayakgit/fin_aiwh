@@ -1,0 +1,3 @@
+# Optional. Only needed when GRAPHITI_URI or RAGFLOW_URL is set.
+graphiti-core>=0.20
+ragflow-sdk>=0.20
