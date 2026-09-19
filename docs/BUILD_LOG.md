@@ -1253,3 +1253,28 @@ Graphiti's model wants them; they are not how this is read.
 The general shape, again: deterministic ingest deserves deterministic
 retrieval. Reaching for similarity because the store offers it put a
 neighbouring column's history in front of an agent and called it context.
+
+
+---
+
+## The gate caught what the contracts could not
+
+PR #10 went red on a test that has nothing to do with the column it adopts:
+every one of 19,967 AP invoice lines orphaned from its invoice. The seed has
+zero orphans, and every table still loads cleanly against its contract, so this
+is warehouse state.
+
+Two gaps it exposed, both worth more than the fix.
+
+**Nothing asserted a table has rows.** An empty `AP_INVOICE` passes the
+duplicate key check (no duplicates), the null checks (no nulls) and leaves only
+freshness to notice. Every content check can be green on a table with nothing
+in it. There is now a derived `ROW_COUNT >= 1` floor on every contract at
+MEDIUM: a contract asserting a primary key over an empty table asserts nothing.
+
+**Contracts do not express foreign keys.** `AP_INVOICE_LINE.INVOICE_ID`
+referencing `AP_INVOICE` exists only as a dbt `relationships` test. The content
+layer, which governs duplicates, nulls and freshness, is blind to a broken
+reference between two governed datasets. dbt caught this one. That is the two
+layers working as intended, and also a clear statement of where the contract
+stops.

@@ -361,6 +361,7 @@ invented:
 
 | Contract says | Check | Severity | Why |
 |---|---|---|---|
+| any contract | `ROW_COUNT >= 1` | MEDIUM | an empty table passes every other check vacuously and is still broken |
 | `primary_key: [A]` | `DUPLICATE_COUNT(A) == 0` | BREAKING | every join fans out, every total double counts |
 | `nullable: false` | `NULL_COUNT(col) == 0` | BREAKING | what scenario 06's guard test caught, caught at source |
 | `freshness: max_lag_hours: N` | hours behind on the column `<= N` | MEDIUM | reports are correct but old; a human decides |
@@ -750,6 +751,7 @@ nothing to do and exits clean.
 | CI reuses `FIN_AIWH_SVC` | Production would use a separate CI user and narrower role |
 | Synthetic seed data | Demo scale, not TB scale |
 | Column lineage is textual | Errs toward over reporting |
+| Contracts do not express foreign keys | `AP_INVOICE_LINE.INVOICE_ID` referencing `AP_INVOICE` lives only in a dbt `relationships` test. The content layer cannot see a broken reference; dbt caught it on PR #10 |
 | Undeclared consumers are invisible | Every report must be an exposure |
 
 ---

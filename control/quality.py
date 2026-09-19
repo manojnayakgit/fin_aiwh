@@ -50,7 +50,8 @@ SYSTEM_DMFS = {
     "NULL_COUNT", "NULL_PERCENT", "DUPLICATE_COUNT", "UNIQUE_COUNT",
     "ROW_COUNT", "BLANK_COUNT", "BLANK_PERCENT", "AVG", "MIN", "MAX", "STDDEV",
 }
-QUALITY_TYPES = {"DUPLICATE_KEY", "NULL_IN_REQUIRED", "STALE", "EXPECTATION_BREACHED"}
+QUALITY_TYPES = {"DUPLICATE_KEY", "NULL_IN_REQUIRED", "STALE", "EMPTY_DATASET",
+                 "EXPECTATION_BREACHED"}
 
 
 # SNOWFLAKE.CORE.NULL_COUNT refuses a BOOLEAN argument, cast or not. Columns of
@@ -125,6 +126,16 @@ class Check:
 def desired(contract: Contract) -> list[Check]:
     out: list[Check] = []
     key = contract.dataset
+
+    # A contracted dataset with no rows passes every other check here: no
+    # duplicate keys, no nulls, nothing to measure. It is also broken. The
+    # floor is derived, not configured, because a contract asserting a primary
+    # key over an empty table asserts nothing at all.
+    out.append(Check(
+        dataset_key=key, change_type="EMPTY_DATASET",
+        dmf="SNOWFLAKE.CORE.ROW_COUNT", columns=(), min=1, max=None, severity=MEDIUM,
+        why="the contract governs this dataset; zero rows means nothing to govern",
+    ))
 
     if contract.primary_key:
         out.append(Check(

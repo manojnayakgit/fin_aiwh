@@ -175,3 +175,14 @@ def test_boolean_not_null_uses_the_custom_dmf():
     assert nulls["IS_ACTIVE"].dmf == "FIN_AIWH.META.NULL_COUNT_BOOL"
     assert nulls["VENDOR_ID"].dmf == "SNOWFLAKE.CORE.NULL_COUNT"
     assert "CAST" not in nulls["IS_ACTIVE"].sql()
+
+
+def test_every_contract_gets_a_row_count_floor():
+    """An empty table passes duplicate and null checks vacuously. PR #10's gate
+    failed on 19,967 orphaned invoice lines while every content check was
+    green, because nothing asserted the parent table had rows."""
+    c = next(x for x in desired(contract()) if x.change_type == "EMPTY_DATASET")
+    assert c.dmf == "SNOWFLAKE.CORE.ROW_COUNT" and c.columns == ()
+    assert c.min == 1 and c.max is None and c.severity == MEDIUM
+    assert c.sql() == "SNOWFLAKE.CORE.ROW_COUNT(SELECT * FROM FIN_AIWH.RAW.AP_INVOICE)"
+    assert c.breached(0.0) and not c.breached(8000.0)
