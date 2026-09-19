@@ -1264,6 +1264,15 @@ every one of 19,967 AP invoice lines orphaned from its invoice. The seed has
 zero orphans, and every table still loads cleanly against its contract, so this
 is warehouse state.
 
+**The cause was a 59 second window.** RAW was fine when checked: 8,000
+invoices, 8,000 distinct keys, 19,967 lines across those keys, zero orphans.
+The gate finished at 11:21:28. `LOADED_AT` on both tables reads 11:22:27.880.
+The gate ran while `AP_INVOICE` was still empty from the `load` that truncated
+and then failed, and the reload landed a minute later. The red check was a
+photograph of a minute that no longer existed, and nothing on the pull request
+said so. A gate verdict is a point in time; when the cause is warehouse state
+rather than the diff, fixing it outside the PR leaves a stale verdict behind.
+
 Two gaps it exposed, both worth more than the fix.
 
 **Nothing asserted a table has rows.** An empty `AP_INVOICE` passes the
@@ -1271,6 +1280,8 @@ duplicate key check (no duplicates), the null checks (no nulls) and leaves only
 freshness to notice. Every content check can be green on a table with nothing
 in it. There is now a derived `ROW_COUNT >= 1` floor on every contract at
 MEDIUM: a contract asserting a primary key over an empty table asserts nothing.
+That floor would have raised `EMPTY_DATASET` at detect time, a minute before
+the gate ran, which is exactly where this should have been caught.
 
 **Contracts do not express foreign keys.** `AP_INVOICE_LINE.INVOICE_ID`
 referencing `AP_INVOICE` exists only as a dbt `relationships` test. The content

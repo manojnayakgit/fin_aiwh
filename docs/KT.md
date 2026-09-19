@@ -781,6 +781,7 @@ contained. Verification does not trust the draft either way.
 | `local 'main' is N commit(s) ahead of origin/main` | The agent branches from `origin/main`, so unpushed local commits would show in the PR diff as deletions | `git push`, then rerun |
 | A publish died and the branch already exists | A run that failed after the push left the branch behind | Nothing. The next run deletes it and recreates from `origin/base` |
 | `gh pr create` fails with no visible reason | Older `_run` hid the subprocess output | Fixed. Failures now print what the command said |
+| A gate check is red but the warehouse looks fine | The gate ran against an earlier warehouse state; fixing data outside the PR does not refresh it | Re-run the failed jobs. `detect` is the layer that should have caught it first |
 | `git commit failed: nothing to commit` on a shield | The shield was already merged, or the drift is gone | Fixed. The agent skips both cases and says which |
 | `load` says `skipped: table has NOT NULL columns with no default that the seed does not carry` | The table moved past the v1 seed (scenario 02 added `REVENUE_STREAM` NOT NULL) | Nothing was truncated. Either adopt the column so the seed can be regenerated, or leave that table's data as it is |
 | `Invalid argument types for function 'NULL_COUNT'` | A NOT NULL BOOLEAN column; the system DMF refuses it cast or not | Fixed. `FIN_AIWH.META.NULL_COUNT_BOOL`, a custom DMF with the type declared, from `ops/20_quality.sql` |
